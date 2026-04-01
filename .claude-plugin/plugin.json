@@ -1,6 +1,6 @@
 {
   "name": "jpyc-dev-reference",
   "version": "1.0.0",
-  "description": "Developer reference for JPYC — a JPY-pegged stablecoin (日本円連動ステーブルコイン). Covers ERC20, EIP-3009 gasless transfers, EIP-2612 permit, admin operations, and all 6 supported chains.",
+  "description": "Developer reference for JPYC, a JPY-pegged stablecoin (日本円ステーブルコイン) deployed on Ethereum, Polygon, and Avalanche. Provides contract addresses, ERC20 functions, EIP-3009 gasless transfer signatures, EIP-2612 permit, admin/role operations (mint, burn, pause, blocklist), EIP712 domain configuration, type hashes, error messages, and TypeScript/viem code examples.",
   "author": "shineikikkawa"
 }
