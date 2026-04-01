@@ -1,13 +1,13 @@
-# JPYC Skill for Claude Code
+# JPYC Plugin for Claude Code
 
-A [Claude Code skill](https://docs.anthropic.com/en/docs/claude-code/skills) that provides comprehensive JPYC smart contract reference for building dApps, scripts, and integrations.
+A [Claude Code plugin](https://docs.anthropic.com/en/docs/claude-code/plugins) that provides comprehensive JPYC smart contract reference for building dApps, scripts, and integrations.
 
 ## What's included
 
-- **SKILL.md** — Contract overview, addresses, EIP712 domain, ERC20 functions, key constraints, and error messages
-- **references/eip3009.md** — EIP-3009 gasless transfers (`transferWithAuthorization`, `receiveWithAuthorization`, `cancelAuthorization`) with TypeScript/viem examples
-- **references/eip2612.md** — EIP-2612 permit (gasless approve) with TypeScript/viem examples
-- **references/admin.md** — Admin roles and operations (mint, burn, pause, blocklist, rescue, upgrade)
+- **skills/jpyc/SKILL.md** — Contract overview, addresses, EIP712 domain, ERC20 functions, key constraints, and error messages
+- **skills/jpyc/references/eip3009.md** — EIP-3009 gasless transfers (`transferWithAuthorization`, `receiveWithAuthorization`, `cancelAuthorization`) with TypeScript/viem examples
+- **skills/jpyc/references/eip2612.md** — EIP-2612 permit (gasless approve) with TypeScript/viem examples
+- **skills/jpyc/references/admin.md** — Admin roles and operations (mint, burn, pause, blocklist, rescue, upgrade)
 
 ## Coverage
 
@@ -22,11 +22,23 @@ A [Claude Code skill](https://docs.anthropic.com/en/docs/claude-code/skills) tha
 
 ## Installation
 
+### Via plugin marketplace (recommended)
+
 ```bash
-claude skill install shineikikkawa/jpyc-skill
+# 1. Add the marketplace
+/plugin marketplace add Mameta29/jpyc-skill
+
+# 2. Install the plugin
+/plugin install jpyc@Mameta29-jpyc-skill
 ```
 
-Or manually copy the `SKILL.md` and `references/` directory into your `.claude/skills/jpyc/` directory.
+### Manual installation
+
+```bash
+git clone https://github.com/Mameta29/jpyc-skill.git
+mkdir -p ~/.claude/skills/jpyc
+cp -r jpyc-skill/skills/jpyc/* ~/.claude/skills/jpyc/
+```
 
 ## Usage
 
