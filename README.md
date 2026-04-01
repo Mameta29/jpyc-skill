@@ -22,18 +22,6 @@ A [Claude Code plugin](https://docs.anthropic.com/en/docs/claude-code/plugins) p
 
 ## Installation
 
-### Via plugin marketplace (recommended)
-
-```bash
-# 1. Add the marketplace
-/plugin marketplace add Mameta29/jpyc-skill
-
-# 2. Install the plugin
-/plugin install jpyc-dev-reference@Mameta29-jpyc-skill
-```
-
-### Manual installation
-
 ```bash
 git clone https://github.com/Mameta29/jpyc-skill.git
 mkdir -p ~/.claude/skills/jpyc
