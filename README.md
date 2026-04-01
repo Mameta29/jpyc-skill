@@ -1,6 +1,6 @@
 # jpyc-dev-reference
 
-A [Claude Code plugin](https://docs.anthropic.com/en/docs/claude-code/plugins) providing a developer reference for JPYC — a JPY-pegged stablecoin (日本円ステーブルコイン). Covers smart contract functions, addresses, and signature construction for building dApps, scripts, and integrations.
+A [Claude Code plugin](https://docs.anthropic.com/en/docs/claude-code/plugins) providing a developer reference for JPYC — a JPY-pegged stablecoin (日本円連動ステーブルコイン). Covers smart contract functions, addresses, and signature construction for building dApps, scripts, and integrations.
 
 ## What's included
 
