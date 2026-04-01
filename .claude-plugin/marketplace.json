@@ -9,9 +9,11 @@
       "description": "Developer reference for JPYC, a JPY-pegged stablecoin (日本円ステーブルコイン) deployed on Ethereum, Polygon, and Avalanche. Provides contract addresses, ERC20 functions, EIP-3009 gasless transfer signatures, EIP-2612 permit, admin/role operations (mint, burn, pause, blocklist), EIP712 domain configuration, type hashes, error messages, and TypeScript/viem code examples.",
       "version": "1.0.0",
       "source": {
-        "source": "url",
-        "url": "https://github.com/Mameta29/jpyc-skill.git",
-        "sha": "0ed9ebcd08389f92b9e7dd5c41d0c44498509a47"
+        "source": "git-subdir",
+        "url": "Mameta29/jpyc-skill",
+        "path": "skills/jpyc",
+        "ref": "main",
+        "sha": "6f0fc21950292891f7e7506b21a52c5a7c633aa5"
       }
     }
   ]
