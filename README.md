@@ -1,6 +1,6 @@
-# JPYC Plugin for Claude Code
+# jpyc-dev-reference
 
-A [Claude Code plugin](https://docs.anthropic.com/en/docs/claude-code/plugins) that provides comprehensive JPYC smart contract reference for building dApps, scripts, and integrations.
+A [Claude Code plugin](https://docs.anthropic.com/en/docs/claude-code/plugins) providing a developer reference for JPYC — a JPY-pegged stablecoin (日本円ステーブルコイン). Covers smart contract functions, addresses, and signature construction for building dApps, scripts, and integrations.
 
 ## What's included
 
@@ -29,7 +29,7 @@ A [Claude Code plugin](https://docs.anthropic.com/en/docs/claude-code/plugins) t
 /plugin marketplace add Mameta29/jpyc-skill
 
 # 2. Install the plugin
-/plugin install jpyc@Mameta29-jpyc-skill
+/plugin install jpyc-dev-reference@Mameta29-jpyc-skill
 ```
 
 ### Manual installation

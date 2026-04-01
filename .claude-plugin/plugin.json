@@ -1,6 +1,6 @@
 {
-  "name": "jpyc",
+  "name": "jpyc-dev-reference",
   "version": "1.0.0",
-  "description": "JPYC (Japanese Yen Coin) smart contract reference for Claude Code. Covers ERC20, EIP-3009 gasless transfers, EIP-2612 permit, admin operations, and all 6 supported chains.",
+  "description": "Developer reference for JPYC — a JPY-pegged stablecoin. Covers ERC20, EIP-3009 gasless transfers, EIP-2612 permit, admin operations, and all 6 supported chains.",
   "author": "shineikikkawa"
 }

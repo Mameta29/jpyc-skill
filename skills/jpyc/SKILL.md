@@ -1,13 +1,13 @@
 ---
 name: jpyc
-description: Complete reference for JPYC (Japanese Yen Coin) smart contract development. Use when building dApps, scripts, or integrations with JPYC token. Covers all functions including EIP-3009 gasless transfers (transferWithAuthorization, receiveWithAuthorization), EIP-2612 permit, EIP712 domain, admin operations (mint/burn/blocklist/pause), contract addresses, type hashes, and signature construction patterns.
+description: Developer reference for JPYC (JPY-pegged stablecoin) smart contract. Use when building dApps, scripts, or integrations with JPYC token. Covers all functions including EIP-3009 gasless transfers (transferWithAuthorization, receiveWithAuthorization), EIP-2612 permit, EIP712 domain, admin operations (mint/burn/blocklist/pause), contract addresses, type hashes, and signature construction patterns.
 ---
 
 # JPYC Contract Reference
 
 ## Contract Overview
 
-JPYC is a JPY-pegged stablecoin issued as a **funds transfer business (資金移動業)** token. The contract (`FiatTokenV1`) is forked from Centre's USDC implementation and deployed as a **UUPS upgradeable proxy** on multiple chains.
+JPYC is a JPY-pegged stablecoin (日本円ステーブルコイン) issued as a **funds transfer business (資金移動業)** token. The contract (`FiatTokenV1`) is forked from Centre's USDC implementation and deployed as a **UUPS upgradeable proxy** on multiple chains.
 
 - **Contract name**: `FiatTokenV1`
 - **Solidity version**: `0.8.11`

@@ -1,8 +1,8 @@
 {
   "plugins": [
     {
-      "name": "jpyc",
-      "description": "JPYC (Japanese Yen Coin) smart contract reference — ERC20, EIP-3009, EIP-2612, admin ops for all supported chains",
+      "name": "jpyc-dev-reference",
+      "description": "Developer reference for JPYC (JPY-pegged stablecoin) — ERC20, EIP-3009, EIP-2612, admin ops for all supported chains",
       "version": "1.0.0",
       "source": "https://github.com/Mameta29/jpyc-skill.git"
     }
