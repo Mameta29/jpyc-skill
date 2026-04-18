@@ -1,0 +1,61 @@
+{
+  "name": "@komlock-lab/jpyc-ec",
+  "version": "0.1.0",
+  "description": "JPYC EC Platform purchase plugin for acli (browse / quote / buy / track with gasless EIP-3009 signing)",
+  "type": "module",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "files": [
+    "dist",
+    "skills"
+  ],
+  "scripts": {
+    "build": "tsup",
+    "dev": "tsup --watch",
+    "test": "vitest",
+    "typecheck": "tsc --noEmit",
+    "prepare": "pnpm build",
+    "prepack": "pnpm build"
+  },
+  "keywords": [
+    "acli",
+    "plugin",
+    "jpyc",
+    "ec",
+    "ecommerce",
+    "stablecoin",
+    "eip-3009",
+    "gasless"
+  ],
+  "author": "Komlock-lab",
+  "license": "UNLICENSED",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/Komlock-lab/acli-jpyc-ec.git"
+  },
+  "publishConfig": {
+    "registry": "https://npm.pkg.github.com"
+  },
+  "packageManager": "pnpm@10.26.1",
+  "engines": {
+    "node": ">=20.0.0"
+  },
+  "dependencies": {
+    "yargs": "^18.0.0"
+  },
+  "devDependencies": {
+    "@types/node": "^22.19.17",
+    "@types/yargs": "^17.0.35",
+    "tsup": "^8.5.1",
+    "typescript": "^5.8.3",
+    "vitest": "^4.1.2"
+  },
+  "peerDependencies": {
+    "@komlock-lab/acli": ">=0.1.3"
+  },
+  "peerDependenciesMeta": {
+    "@komlock-lab/acli": {
+      "optional": true
+    }
+  }
+}
