@@ -81,6 +81,9 @@ async function request<T>(
   return body.data;
 }
 
+/** ショップの在庫表示モード */
+export type StockDisplayMode = 'exact' | 'low_stock_only' | 'hidden';
+
 export interface Shop {
   id: string;
   slug: string;
@@ -90,6 +93,9 @@ export interface Shop {
   available_chains: number[];
   default_chain_id: number;
   free_shipping_threshold?: string;
+  category?: string;
+  stock_display_mode?: StockDisplayMode;
+  low_stock_threshold?: number;
   wallet_address?: string;
 }
 
@@ -102,11 +108,17 @@ export interface Product {
   image_urls: string[];
   requires_shipping: boolean;
   grants_free_shipping: boolean;
+  category?: string;
+  tags?: string[];
+  review_avg_rating?: number | null;
+  review_count?: number;
+  has_nft_discount?: boolean;
 }
 
 export interface ShopWithProducts {
   shop: Shop;
   products: Product[];
+  has_nft_discounts?: boolean;
 }
 
 export interface ShippingFeeResponse {
@@ -126,6 +138,14 @@ export interface BalanceCheckResponse {
   required: string;
 }
 
+export interface OrderItem {
+  product_id?: string;
+  product_name: string;
+  price_jpyc: string;
+  quantity: number;
+  discount_amount?: string;
+}
+
 export interface OrderRecord {
   id: string;
   order_number: string;
@@ -133,19 +153,20 @@ export interface OrderRecord {
   valid_after: string;
   valid_before: string;
   subtotal_jpyc: string;
+  discount_jpyc?: string;
   shipping_jpyc: string;
   total_jpyc: string;
   chain_id: number;
   order_status: number;
   created_at: string;
   tx_hash?: string | null;
-  items?: Array<{ product_name: string; price_jpyc: string; quantity: number }>;
+  items?: OrderItem[];
 }
 
 export interface CreateOrderResponse {
   order: OrderRecord;
   shop_wallet_address: string;
-  items: Array<{ product_name: string; price_jpyc: string; quantity: number }>;
+  items: OrderItem[];
 }
 
 export interface SubmitSignatureResponse {
@@ -163,9 +184,59 @@ export interface ListOrdersResponse {
   orders: OrderRecord[];
 }
 
+export interface CategoriesResponse {
+  shop_categories: string[];
+  product_categories: string[];
+  product_tags: string[];
+}
+
+export interface Review {
+  id: string;
+  customer_address: string;
+  rating: number;
+  title?: string;
+  content?: string;
+  created_at: string;
+}
+
+export interface ReviewsResponse {
+  product_id: string;
+  avg_rating: number | null;
+  review_count: number;
+  reviews: Review[];
+}
+
+/** NFT/SBT 割引ルール */
+export type NftDiscountType = 'percentage' | 'fixed';
+export type NftDiscountConditionType = 'balance' | 'ownership';
+
+export interface NftDiscountRule {
+  id: string;
+  name: string;
+  contract_address: string;
+  chain_id: number;
+  condition_type: NftDiscountConditionType;
+  condition_value: Record<string, unknown>;
+  discount_type: NftDiscountType;
+  /** percentage なら "10.00"、fixed なら JPYC 額 */
+  discount_value: string;
+  apply_to_all: boolean;
+  /** apply_to_all: false のとき商品 UUID の配列、true のとき "all" */
+  product_ids: string[] | 'all';
+}
+
+export interface NftDiscountsResponse {
+  shop_id: string;
+  discount_rules: NftDiscountRule[];
+}
+
 export async function listShops(env: Env): Promise<Shop[]> {
   const data = await request<ListShopsResponse>(env, '/shops');
   return data.shops;
+}
+
+export async function listCategories(env: Env): Promise<CategoriesResponse> {
+  return request<CategoriesResponse>(env, '/categories');
 }
 
 export async function getShopProducts(
@@ -182,6 +253,17 @@ export interface ProductDetail {
 
 export async function getProduct(env: Env, productId: string): Promise<ProductDetail> {
   return request<ProductDetail>(env, `/products/${encodeURIComponent(productId)}`);
+}
+
+export async function getProductReviews(env: Env, productId: string): Promise<ReviewsResponse> {
+  return request<ReviewsResponse>(env, `/products/${encodeURIComponent(productId)}/reviews`);
+}
+
+export async function listNftDiscounts(env: Env, shopSlug: string): Promise<NftDiscountsResponse> {
+  return request<NftDiscountsResponse>(
+    env,
+    `/shops/${encodeURIComponent(shopSlug)}/nft-discounts`,
+  );
 }
 
 export interface ShippingFeeRequest {
@@ -217,6 +299,18 @@ export async function checkBalance(
   });
 }
 
+export interface CreateOrderDiscountItem {
+  discount_amount: string;
+  /** NFT 割引ルールをそのまま stringify したもの */
+  rule_snapshot: string;
+}
+
+export interface CreateOrderDiscount {
+  rule_id: string;
+  total_discount: string;
+  item_discounts: Record<string, CreateOrderDiscountItem>;
+}
+
 export interface CreateOrderRequest {
   shop_id: string;
   customer_address: string;
@@ -230,6 +324,7 @@ export interface CreateOrderRequest {
   shipping_address2?: string;
   shipping_zip?: string;
   shipping_tel?: string;
+  discount?: CreateOrderDiscount;
 }
 
 export async function createOrder(
@@ -260,6 +355,58 @@ export async function listOrders(env: Env, customerAddress: string): Promise<Ord
     `/orders?customer_address=${encodeURIComponent(customerAddress)}`,
   );
   return data.orders;
+}
+
+/**
+ * 単一商品を購入する場合の NFT 割引額を計算し、
+ * createOrder に渡す `discount` オブジェクトを組み立てる。
+ *
+ * - `discount_type === "percentage"` の場合: subtotal × (discount_value / 100)（小数切り捨て）
+ * - `discount_type === "fixed"` の場合: min(discount_value, subtotal)
+ * - `apply_to_all: false` かつ `product_ids` に対象商品が含まれない場合は undefined を返す
+ *
+ * subtotal は小数を切り捨てた整数 JPYC として扱う（画面表示と一致させる）。
+ */
+export function buildDiscountObjectForSingleProduct(params: {
+  rule: NftDiscountRule;
+  productId: string;
+  subtotalInt: number;
+}): CreateOrderDiscount | undefined {
+  const { rule, productId, subtotalInt } = params;
+  if (!rule.apply_to_all) {
+    if (!Array.isArray(rule.product_ids) || !rule.product_ids.includes(productId)) {
+      return undefined;
+    }
+  }
+  let discountInt = 0;
+  if (rule.discount_type === 'percentage') {
+    const pct = parseFloat(rule.discount_value);
+    if (!Number.isFinite(pct) || pct <= 0) return undefined;
+    discountInt = Math.floor((subtotalInt * pct) / 100);
+  } else if (rule.discount_type === 'fixed') {
+    const fixed = Math.floor(parseFloat(rule.discount_value));
+    if (!Number.isFinite(fixed) || fixed <= 0) return undefined;
+    discountInt = Math.min(fixed, subtotalInt);
+  } else {
+    return undefined;
+  }
+  if (discountInt <= 0) return undefined;
+  const snapshot = JSON.stringify({
+    id: rule.id,
+    name: rule.name,
+    discount_type: rule.discount_type,
+    discount_value: rule.discount_value,
+  });
+  return {
+    rule_id: rule.id,
+    total_discount: String(discountInt),
+    item_discounts: {
+      [productId]: {
+        discount_amount: String(discountInt),
+        rule_snapshot: snapshot,
+      },
+    },
+  };
 }
 
 /**

@@ -1,9 +1,20 @@
 import type { ArgumentsCamelCase, Argv, CommandModule } from 'yargs';
 import type { PluginContext } from '../types.js';
 import * as api from '../lib/jpyc-ec-api.js';
-import { resolveChainId, getApiBase, buildReceiveWithAuthorizationTypedData, type Env } from '../lib/jpyc-ec-api.js';
+import {
+  resolveChainId,
+  getApiBase,
+  buildReceiveWithAuthorizationTypedData,
+  buildDiscountObjectForSingleProduct,
+  type Env,
+  type NftDiscountRule,
+  type CreateOrderDiscount,
+} from '../lib/jpyc-ec-api.js';
 
 type BrowseArgs = { shop?: string; env?: string };
+type CategoriesArgs = { env?: string };
+type ReviewsArgs = { product: string; env?: string };
+type NftDiscountsArgs = { shop: string; env?: string };
 type QuoteArgs = {
   product: string;
   qty: number;
@@ -11,6 +22,7 @@ type QuoteArgs = {
   wallet?: string;
   shippingPrefecture?: string;
   shippingCity?: string;
+  discountRuleId?: string;
   env?: string;
 };
 type BuyArgs = {
@@ -26,6 +38,7 @@ type BuyArgs = {
   shippingZip?: string;
   shippingTel?: string;
   customerNote?: string;
+  discountRuleId?: string;
   env?: string;
   apiKey?: string;
 };
@@ -39,7 +52,8 @@ function normalizeEnv(raw: string | undefined): Env {
 export function buildJpycEcCommand(ctx: PluginContext): CommandModule {
   return {
     command: 'jpyc-ec <subcommand>',
-    describe: 'JPYC EC Platform purchase commands (browse / quote / buy / track)',
+    describe:
+      'JPYC EC Platform purchase commands (browse / categories / reviews / nft-discounts / quote / buy / track)',
     builder: (yargs: Argv) => {
       return yargs
         .command(
@@ -52,8 +66,48 @@ export function buildJpycEcCommand(ctx: PluginContext): CommandModule {
           (argv: ArgumentsCamelCase<BrowseArgs>) => browseHandler(ctx, argv),
         )
         .command(
+          'categories',
+          'List shop categories, product categories, and product tags',
+          (y) =>
+            y.option('env', {
+              type: 'string',
+              choices: ['production', 'staging'],
+              default: 'production',
+              describe: 'API environment',
+            }),
+          (argv: ArgumentsCamelCase<CategoriesArgs>) => categoriesHandler(ctx, argv),
+        )
+        .command(
+          'reviews',
+          'Show reviews for a product (from verified purchasers)',
+          (y) =>
+            y
+              .option('product', { type: 'string', demandOption: true, describe: 'Product UUID' })
+              .option('env', {
+                type: 'string',
+                choices: ['production', 'staging'],
+                default: 'production',
+                describe: 'API environment',
+              }),
+          (argv: ArgumentsCamelCase<ReviewsArgs>) => reviewsHandler(ctx, argv),
+        )
+        .command(
+          'nft-discounts',
+          'Show NFT/SBT discount rules for a shop',
+          (y) =>
+            y
+              .option('shop', { type: 'string', demandOption: true, describe: 'Shop slug' })
+              .option('env', {
+                type: 'string',
+                choices: ['production', 'staging'],
+                default: 'production',
+                describe: 'API environment',
+              }),
+          (argv: ArgumentsCamelCase<NftDiscountsArgs>) => nftDiscountsHandler(ctx, argv),
+        )
+        .command(
           'quote',
-          'Calculate total (with shipping and balance check)',
+          'Calculate total (with shipping, discount, and balance check)',
           (y) =>
             y
               .option('product', { type: 'string', demandOption: true, describe: 'Product UUID' })
@@ -62,6 +116,7 @@ export function buildJpycEcCommand(ctx: PluginContext): CommandModule {
               .option('wallet', { type: 'string', describe: 'Wallet name for balance check' })
               .option('shipping-prefecture', { type: 'string', describe: 'Shipping prefecture (required if product requires shipping)' })
               .option('shipping-city', { type: 'string', describe: 'Shipping city (optional)' })
+              .option('discount-rule-id', { type: 'string', describe: 'NFT/SBT discount rule UUID to apply' })
               .option('env', { type: 'string', choices: ['production', 'staging'], default: 'production', describe: 'API environment' }),
           (argv: ArgumentsCamelCase<QuoteArgs>) => quoteHandler(ctx, argv),
         )
@@ -82,6 +137,7 @@ export function buildJpycEcCommand(ctx: PluginContext): CommandModule {
               .option('shipping-zip', { type: 'string', describe: 'Postal code' })
               .option('shipping-tel', { type: 'string', describe: 'Phone' })
               .option('customer-note', { type: 'string', describe: 'Customer note (max 2000 chars)' })
+              .option('discount-rule-id', { type: 'string', describe: 'NFT/SBT discount rule UUID to apply' })
               .option('env', { type: 'string', choices: ['production', 'staging'], default: 'production', describe: 'API environment' })
               .option('api-key', { type: 'string', describe: 'OWS API key (for agent-mode signing)' }),
           (argv: ArgumentsCamelCase<BuyArgs>) => buyHandler(ctx, argv),
@@ -96,7 +152,10 @@ export function buildJpycEcCommand(ctx: PluginContext): CommandModule {
               .option('env', { type: 'string', choices: ['production', 'staging'], default: 'production', describe: 'API environment' }),
           (argv: ArgumentsCamelCase<TrackArgs>) => trackHandler(ctx, argv),
         )
-        .demandCommand(1, 'Specify a subcommand: browse, quote, buy, or track');
+        .demandCommand(
+          1,
+          'Specify a subcommand: browse, categories, reviews, nft-discounts, quote, buy, or track',
+        );
     },
     handler: () => {},
   };
@@ -113,6 +172,7 @@ async function browseHandler(ctx: PluginContext, argv: ArgumentsCamelCase<Browse
           apiBase: getApiBase(env),
           shop: data.shop,
           products: data.products,
+          has_nft_discounts: data.has_nft_discounts ?? false,
         }),
       );
     } else {
@@ -124,6 +184,57 @@ async function browseHandler(ctx: PluginContext, argv: ArgumentsCamelCase<Browse
   } catch (err) {
     handleApiError(ctx, err);
   }
+}
+
+async function categoriesHandler(ctx: PluginContext, argv: ArgumentsCamelCase<CategoriesArgs>) {
+  try {
+    const env = normalizeEnv(argv.env);
+    const data = await api.listCategories(env);
+    ctx.output.print(ctx.output.success({ env, ...data }));
+  } catch (err) {
+    handleApiError(ctx, err);
+  }
+}
+
+async function reviewsHandler(ctx: PluginContext, argv: ArgumentsCamelCase<ReviewsArgs>) {
+  try {
+    const env = normalizeEnv(argv.env);
+    const data = await api.getProductReviews(env, argv.product);
+    ctx.output.print(ctx.output.success({ env, ...data }));
+  } catch (err) {
+    handleApiError(ctx, err);
+  }
+}
+
+async function nftDiscountsHandler(
+  ctx: PluginContext,
+  argv: ArgumentsCamelCase<NftDiscountsArgs>,
+) {
+  try {
+    const env = normalizeEnv(argv.env);
+    const data = await api.listNftDiscounts(env, argv.shop);
+    ctx.output.print(ctx.output.success({ env, ...data }));
+  } catch (err) {
+    handleApiError(ctx, err);
+  }
+}
+
+async function resolveDiscountForQuote(
+  env: Env,
+  shopSlug: string,
+  discountRuleId: string,
+  productId: string,
+  subtotalInt: number,
+): Promise<{ discount: CreateOrderDiscount | undefined; rule: NftDiscountRule | undefined }> {
+  const rules = await api.listNftDiscounts(env, shopSlug);
+  const rule = rules.discount_rules.find((r) => r.id === discountRuleId);
+  if (!rule) return { discount: undefined, rule: undefined };
+  const discount = buildDiscountObjectForSingleProduct({
+    rule,
+    productId,
+    subtotalInt,
+  });
+  return { discount, rule };
 }
 
 async function quoteHandler(ctx: PluginContext, argv: ArgumentsCamelCase<QuoteArgs>) {
@@ -155,7 +266,7 @@ async function quoteHandler(ctx: PluginContext, argv: ArgumentsCamelCase<QuoteAr
     }
 
     const priceInt = Math.floor(parseFloat(product.price_jpyc));
-    let subtotal = priceInt * argv.qty;
+    const subtotalInt = priceInt * argv.qty;
     let shippingFee = '0';
     let shippingReason: string | undefined;
 
@@ -168,8 +279,40 @@ async function quoteHandler(ctx: PluginContext, argv: ArgumentsCamelCase<QuoteAr
       });
       shippingFee = fee.shipping_fee;
       shippingReason = fee.reason;
-      subtotal += parseFloat(fee.shipping_fee);
     }
+
+    let discountInfo:
+      | { rule_id: string; rule_name: string; amount: string }
+      | undefined;
+    let discountInt = 0;
+    if (argv.discountRuleId) {
+      const { discount, rule } = await resolveDiscountForQuote(
+        env,
+        shop.slug,
+        argv.discountRuleId,
+        argv.product,
+        subtotalInt,
+      );
+      if (!rule) {
+        ctx.output.print(
+          ctx.output.error(
+            'DISCOUNT_RULE_NOT_FOUND',
+            `Discount rule "${argv.discountRuleId}" not found in shop "${shop.slug}"`,
+          ),
+        );
+        process.exit(1);
+      }
+      if (discount) {
+        discountInt = Number(discount.total_discount);
+        discountInfo = {
+          rule_id: rule.id,
+          rule_name: rule.name,
+          amount: discount.total_discount,
+        };
+      }
+    }
+
+    const totalInt = subtotalInt - discountInt + parseFloat(shippingFee);
 
     let balanceInfo: { address: string; balance: string; sufficient: boolean } | undefined;
     if (argv.wallet) {
@@ -180,7 +323,7 @@ async function quoteHandler(ctx: PluginContext, argv: ArgumentsCamelCase<QuoteAr
       }
       const bal = await api.checkBalance(env, {
         address,
-        required_amount: String(subtotal),
+        required_amount: String(totalInt),
         chain_id: chainId,
       });
       balanceInfo = { address, balance: bal.balance, sufficient: bal.sufficient };
@@ -196,14 +339,17 @@ async function quoteHandler(ctx: PluginContext, argv: ArgumentsCamelCase<QuoteAr
           price_jpyc: product.price_jpyc,
           requires_shipping: product.requires_shipping,
           stock: product.stock,
+          has_nft_discount: product.has_nft_discount ?? false,
         },
         chain: argv.chain,
         chainId,
         quantity: argv.qty,
-        subtotal_jpyc: String(priceInt * argv.qty),
+        subtotal_jpyc: String(subtotalInt),
+        discount_jpyc: String(discountInt),
+        discount: discountInfo,
         shipping_jpyc: shippingFee,
         shipping_reason: shippingReason,
-        total_jpyc: String(subtotal),
+        total_jpyc: String(totalInt),
         balance: balanceInfo,
       }),
     );
@@ -262,6 +408,29 @@ async function buyHandler(ctx: PluginContext, argv: ArgumentsCamelCase<BuyArgs>)
       process.exit(1);
     }
 
+    let discountObject: CreateOrderDiscount | undefined;
+    if (argv.discountRuleId) {
+      const priceInt = Math.floor(parseFloat(product.price_jpyc));
+      const subtotalInt = priceInt * argv.qty;
+      const { discount, rule } = await resolveDiscountForQuote(
+        env,
+        shop.slug,
+        argv.discountRuleId,
+        argv.product,
+        subtotalInt,
+      );
+      if (!rule) {
+        ctx.output.print(
+          ctx.output.error(
+            'DISCOUNT_RULE_NOT_FOUND',
+            `Discount rule "${argv.discountRuleId}" not found in shop "${shop.slug}"`,
+          ),
+        );
+        process.exit(1);
+      }
+      discountObject = discount;
+    }
+
     const created = await api.createOrder(env, {
       shop_id: shop.id,
       customer_address: address,
@@ -275,6 +444,7 @@ async function buyHandler(ctx: PluginContext, argv: ArgumentsCamelCase<BuyArgs>)
       shipping_address2: argv.shippingAddress2,
       shipping_zip: argv.shippingZip,
       shipping_tel: argv.shippingTel,
+      discount: discountObject,
     });
 
     const typedDataJson = buildReceiveWithAuthorizationTypedData({
@@ -311,6 +481,9 @@ async function buyHandler(ctx: PluginContext, argv: ArgumentsCamelCase<BuyArgs>)
         signed_at: submitted.signed_at,
         chain: argv.chain,
         chainId,
+        subtotal_jpyc: created.order.subtotal_jpyc,
+        discount_jpyc: created.order.discount_jpyc ?? '0',
+        shipping_jpyc: created.order.shipping_jpyc,
         total_jpyc: created.order.total_jpyc,
         shop: { slug: shop.slug, name: shop.name },
         message: 'Signature submitted. Shop will collect payment on-chain shortly.',

@@ -14,8 +14,8 @@ acli-jpyc-ec/
 ├── src/                          # @komlock-lab/jpyc-ec acli plugin
 │   ├── index.ts                  # PluginFactory (create)
 │   ├── types.ts                  # PluginContext ローカルコピー
-│   ├── commands/jpyc-ec.ts       # browse / quote / buy / track
-│   └── lib/jpyc-ec-api.ts        # JPYC EC REST client + EIP-712 typed data
+│   ├── commands/jpyc-ec.ts       # browse / categories / reviews / nft-discounts / quote / buy / track
+│   └── lib/jpyc-ec-api.ts        # JPYC EC REST client + EIP-712 typed data + 割引計算ヘルパ
 ├── skills/
 │   ├── jpyc-ec-purchase/SKILL.md # 購入フローの対話オーケストレーション
 │   └── jpyc/                     # JPYC 開発者向けリファレンス
@@ -53,10 +53,16 @@ pnpm --filter @komlock-lab/acli add link:~/Projects/acli-jpyc-ec
 
 ```bash
 acli jpyc-ec browse [--shop <slug>] [--env production|staging]
-acli jpyc-ec quote --product <id> --qty <n> --chain <name> [--wallet <name>] [--shipping-prefecture <p>]
-acli jpyc-ec buy --wallet <name> --product <id> --qty <n> --chain <name> [--shipping-*] [--env] [--api-key]
+acli jpyc-ec categories [--env]
+acli jpyc-ec reviews --product <id> [--env]
+acli jpyc-ec nft-discounts --shop <slug> [--env]
+acli jpyc-ec quote --product <id> --qty <n> --chain <name> [--wallet <name>] [--shipping-prefecture <p>] [--discount-rule-id <id>]
+acli jpyc-ec buy --wallet <name> --product <id> --qty <n> --chain <name> [--shipping-*] [--discount-rule-id <id>] [--customer-note <s>] [--env] [--api-key]
 acli jpyc-ec track [--wallet <name> | --address <0x...>] [--env]
 ```
+
+- `categories` / `reviews` / `nft-discounts` は閲覧系（残高・署名不要）
+- `--discount-rule-id` は `nft-discounts` で得たルール UUID を指定すると割引額を自動算出して order に添付する（単一商品オーダー対応、percentage / fixed）
 
 ### 2. Claude Code スキル — 対話フロー
 
