@@ -90,12 +90,37 @@ Response:
         "logo_url": "https://...",
         "available_chains": [137, 43114],
         "default_chain_id": 137,
-        "free_shipping_threshold": "5000"
+        "free_shipping_threshold": "5000",
+        "category": "食品,飲料",
+        "stock_display_mode": "exact",
+        "low_stock_threshold": 5
       }
     ]
   }
 }
 ```
+
+`stock_display_mode` values: `"exact"` (show exact count), `"low_stock_only"` (show "low stock" when below threshold), `"hidden"` (hide stock count, only show out-of-stock)
+
+### Step 1.5: Browse Categories (optional)
+
+```
+GET /api/v1/categories
+```
+
+Response:
+```json
+{
+  "ok": true,
+  "data": {
+    "shop_categories": ["クリエイター", "サービス", "その他", "書籍", "雑貨", "食品", "飲料"],
+    "product_categories": ["カメラ用品", "タロット占い", "写真集", "書籍"],
+    "product_tags": ["お米", "おつまみ", "ぬか炊き", "北九州"]
+  }
+}
+```
+
+Use these categories to help users filter shops and products.
 
 ### Step 2: Browse Products
 
@@ -124,15 +149,26 @@ Response:
         "price_jpyc": "1500.000000000000000000",
         "stock": 10,
         "image_urls": ["https://..."],
+        "category": "書籍",
+        "tags": ["お米", "産地直送"],
         "requires_shipping": true,
-        "grants_free_shipping": false
+        "grants_free_shipping": false,
+        "review_avg_rating": 4.5,
+        "review_count": 3,
+        "has_nft_discount": true
       }
-    ]
+    ],
+    "has_nft_discounts": true
   }
 }
 ```
 
 **Important**: `price_jpyc` is a string with 18 decimal places (DECIMAL type). Use the integer part for display (e.g., "1500.000000000000000000" → 1500 JPYC).
+
+- `review_avg_rating`: Average rating (1-5) or `null` if no reviews
+- `review_count`: Number of visible reviews
+- `has_nft_discount`: Whether this product is eligible for NFT/SBT holder discounts
+- `has_nft_discounts`: Whether the shop has any active NFT discount rules
 
 ### Step 3: Get Product Details (optional)
 
@@ -140,7 +176,69 @@ Response:
 GET /api/v1/products/{product_id}
 ```
 
-Returns product details with shop info including `shop.wallet_address`.
+Returns product details with shop info including `shop.wallet_address`, plus `review_avg_rating`, `review_count`, and `has_nft_discount`.
+
+### Step 3.5: Get Product Reviews (optional)
+
+```
+GET /api/v1/products/{product_id}/reviews
+```
+
+Response:
+```json
+{
+  "ok": true,
+  "data": {
+    "product_id": "uuid",
+    "avg_rating": 4.5,
+    "review_count": 3,
+    "reviews": [
+      {
+        "id": "uuid",
+        "customer_address": "0xF243...E853",
+        "rating": 5,
+        "title": "とても良い商品です",
+        "content": "品質が高くて満足しました。",
+        "created_at": "2026-04-20T..."
+      }
+    ]
+  }
+}
+```
+
+Customer addresses are masked for privacy. Reviews are only from verified purchasers (wallet signature verified).
+
+### Step 3.6: Check NFT Discount Rules (optional)
+
+```
+GET /api/v1/shops/{slug}/nft-discounts
+```
+
+Response:
+```json
+{
+  "ok": true,
+  "data": {
+    "shop_id": "uuid",
+    "discount_rules": [
+      {
+        "id": "uuid",
+        "name": "JPYC Supporters SBT",
+        "contract_address": "0xabc...def",
+        "chain_id": 137,
+        "condition_type": "balance",
+        "condition_value": { "min_balance": 1 },
+        "discount_type": "percentage",
+        "discount_value": "10.00",
+        "apply_to_all": true,
+        "product_ids": "all"
+      }
+    ]
+  }
+}
+```
+
+If `apply_to_all` is `false`, `product_ids` will be an array of product UUIDs that the discount applies to. The agent can check if it holds the required NFT/SBT to determine discount eligibility.
 
 ### Step 4: Calculate Shipping Fee (if product requires shipping)
 
@@ -239,18 +337,39 @@ Response:
       "valid_after": "0",
       "valid_before": "1712345678",
       "subtotal_jpyc": "1500.000000000000000000",
+      "discount_jpyc": "150.000000000000000000",
       "shipping_jpyc": "800.000000000000000000",
-      "total_jpyc": "2300.000000000000000000",
+      "total_jpyc": "2150.000000000000000000",
       "chain_id": 137,
       "order_status": 1,
       "created_at": "2026-04-08T..."
     },
     "shop_wallet_address": "0xShopWallet...",
     "items": [
-      { "product_name": "Product", "price_jpyc": "1500.000000000000000000", "quantity": 1 }
+      { "product_name": "Product", "price_jpyc": "1500.000000000000000000", "quantity": 1, "discount_amount": "150.000000000000000000" }
     ]
   }
 }
+```
+
+**NFT Discount**: If the buyer holds an eligible NFT/SBT (check via `/api/v1/shops/{slug}/nft-discounts`), include a `discount` object in the order request to apply the discount:
+
+```json
+{
+  "discount": {
+    "rule_id": "uuid-of-discount-rule",
+    "total_discount": "150",
+    "item_discounts": {
+      "product-uuid": {
+        "discount_amount": "150",
+        "rule_snapshot": "{\"id\":\"...\",\"name\":\"...\",\"discount_type\":\"percentage\",\"discount_value\":\"10\"}"
+      }
+    }
+  }
+}
+```
+
+The `total_jpyc` in the response will reflect: `subtotal - discount + shipping`.
 ```
 
 ### Step 7: Sign EIP-712 Message
@@ -350,10 +469,11 @@ Response:
       {
         "id": "uuid",
         "order_number": "ORD-XXXXXX",
-        "total_jpyc": "2300.000000000000000000",
+        "total_jpyc": "2150.000000000000000000",
+        "discount_jpyc": "150.000000000000000000",
         "order_status": 2,
         "tx_hash": null,
-        "items": [{ "product_name": "Product", "price_jpyc": "1500.000000000000000000", "quantity": 1 }]
+        "items": [{ "product_id": "uuid", "product_name": "Product", "price_jpyc": "1500.000000000000000000", "quantity": 1, "discount_amount": "150.000000000000000000" }]
       }
     ]
   }
