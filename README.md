@@ -57,7 +57,7 @@ acli jpyc-ec categories [--env]
 acli jpyc-ec reviews --product <id> [--env]
 acli jpyc-ec nft-discounts --shop <slug> [--env]
 acli jpyc-ec quote --product <id> --qty <n> --chain <name> [--wallet <name>] [--shipping-prefecture <p>] [--discount-rule-id <id>]
-acli jpyc-ec buy --wallet <name> --product <id> --qty <n> --chain <name> [--shipping-*] [--discount-rule-id <id>] [--customer-note <s>] [--env] [--api-key]
+acli jpyc-ec buy --wallet <name> --product <id> --qty <n> --chain <name> [--shipping-*] [--discount-rule-id <id>] [--customer-note <s>] [--env] [--api-key | --passphrase]
 acli jpyc-ec track [--wallet <name> | --address <0x...>] [--env]
 ```
 

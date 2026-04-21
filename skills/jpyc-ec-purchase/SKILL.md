@@ -41,9 +41,16 @@ acli key rotate --name my-agent  # 失効前にローテート
 
 ### Credential 解決順（buy 実行時に参照される）
 
+**エージェントモード**（APIキーでウォレット復号）:
 1. `--api-key <token>` — 明示指定（非推奨）
 2. config の `credential`（`setup-agent` / `init` が自動保存。**推奨**）
-3. credential 未設定 → オーナーモード（ポリシー評価なし、対話確認のみ）
+
+**オーナーモード**（パスフレーズでウォレット復号）:
+- TTY がある実ターミナルで実行 → 対話入力プロンプトが出る
+- 非対話（Claude Code の bash や CI）→ `--passphrase <value>` を明示指定
+  - ※ シェル履歴にパスフレーズが残るため、運用では **agent mode 移行を推奨**
+
+credential も passphrase も無い場合: 復号失敗（`decryption failed: aead::Error`）。TTY 実行するか agent mode に移行して再実行。
 
 ## 環境の選択
 

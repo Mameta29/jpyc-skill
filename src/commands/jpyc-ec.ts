@@ -41,6 +41,7 @@ type BuyArgs = {
   discountRuleId?: string;
   env?: string;
   apiKey?: string;
+  passphrase?: string;
 };
 type TrackArgs = { wallet?: string; address?: string; env?: string };
 
@@ -139,7 +140,8 @@ export function buildJpycEcCommand(ctx: PluginContext): CommandModule {
               .option('customer-note', { type: 'string', describe: 'Customer note (max 2000 chars)' })
               .option('discount-rule-id', { type: 'string', describe: 'NFT/SBT discount rule UUID to apply' })
               .option('env', { type: 'string', choices: ['production', 'staging'], default: 'production', describe: 'API environment' })
-              .option('api-key', { type: 'string', describe: 'OWS API key (for agent-mode signing)' }),
+              .option('api-key', { type: 'string', describe: 'OWS API key (for agent-mode signing)' })
+              .option('passphrase', { type: 'string', describe: 'Wallet passphrase for owner-mode signing (alternative to agent-mode api-key). Leaks via shell history — prefer agent mode.' }),
           (argv: ArgumentsCamelCase<BuyArgs>) => buyHandler(ctx, argv),
         )
         .command(
@@ -457,18 +459,27 @@ async function buyHandler(ctx: PluginContext, argv: ArgumentsCamelCase<BuyArgs>)
       nonce: created.order.nonce,
     });
 
+    // owner モード: --passphrase が明示されていればそれを使う
+    // agent モード: credential (api-key) を使う
+    // どちらも未指定なら credential 解決にフォールバック（undefined なら OWS 側で復号失敗）
     const credential = ctx.credential.resolve(argv.apiKey);
+    const authArg = argv.passphrase ?? credential;
     const signResult = ctx.wallet.signTypedData(
       walletId,
       `eip155:${chainId}`,
       typedDataJson,
-      credential,
+      authArg,
     );
+
+    // OWS SDK は `0x` プレフィックス無しで署名を返すことがあるため補正する
+    const signatureHex = signResult.signature.startsWith('0x')
+      ? signResult.signature
+      : `0x${signResult.signature}`;
 
     const submitted = await api.submitSignature(
       env,
       created.order.id,
-      signResult.signature,
+      signatureHex,
       address,
     );
 
