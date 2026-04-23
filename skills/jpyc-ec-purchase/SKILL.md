@@ -153,6 +153,18 @@ Response:
         "tags": ["お米", "産地直送"],
         "requires_shipping": true,
         "grants_free_shipping": false,
+        "variants": {
+          "options": [
+            { "name": "挽き方", "values": ["豆のまま", "粉に挽く"] },
+            { "name": "サイズ", "values": ["200g", "400g"] }
+          ],
+          "skus": [
+            { "options": { "挽き方": "豆のまま", "サイズ": "200g" }, "price_jpyc": null },
+            { "options": { "挽き方": "豆のまま", "サイズ": "400g" }, "price_jpyc": "2380" },
+            { "options": { "挽き方": "粉に挽く", "サイズ": "200g" }, "price_jpyc": null },
+            { "options": { "挽き方": "粉に挽く", "サイズ": "400g" }, "price_jpyc": "2380" }
+          ]
+        },
         "review_avg_rating": 4.5,
         "review_count": 3,
         "has_nft_discount": true
@@ -165,6 +177,9 @@ Response:
 
 **Important**: `price_jpyc` is a string with 18 decimal places (DECIMAL type). Use the integer part for display (e.g., "1500.000000000000000000" → 1500 JPYC).
 
+- `variants`: Product options (e.g., size, grind type). `null` if no variants.
+  - `options`: Array of option definitions (name + possible values)
+  - `skus`: Array of option combinations with optional price override. `price_jpyc: null` means use the product's base `price_jpyc`.
 - `review_avg_rating`: Average rating (1-5) or `null` if no reviews
 - `review_count`: Number of visible reviews
 - `has_nft_discount`: Whether this product is eligible for NFT/SBT holder discounts
@@ -176,7 +191,7 @@ Response:
 GET /api/v1/products/{product_id}
 ```
 
-Returns product details with shop info including `shop.wallet_address`, plus `review_avg_rating`, `review_count`, and `has_nft_discount`.
+Returns product details with shop info including `shop.wallet_address`, plus `variants`, `review_avg_rating`, `review_count`, and `has_nft_discount`.
 
 ### Step 3.5: Get Product Reviews (optional)
 
@@ -311,7 +326,11 @@ Content-Type: application/json
   "customer_email": "user@example.com",
   "chain_id": 137,
   "items": [
-    { "product_id": "uuid", "quantity": 1 }
+    {
+      "product_id": "uuid",
+      "quantity": 1,
+      "variant_selections": { "挽き方": "粉に挽く", "サイズ": "200g" }
+    }
   ],
   "shipping_prefecture": "東京都",
   "shipping_address1": "渋谷区神南1-2-3",
@@ -322,6 +341,8 @@ Content-Type: application/json
 ```
 
 **Shipping fields** are required only if ANY product has `requires_shipping: true`. For digital products, omit them.
+
+**Variant selections**: If a product has `variants` (not null), you MUST include `variant_selections` in the item. This is a key-value object mapping each option name to the chosen value (e.g., `{"挽き方": "粉に挽く", "サイズ": "200g"}`). Omitting `variant_selections` for a product with variants will return a validation error. For products without variants, omit the field.
 
 **Optional field**: `customer_note` (max 2000 chars) for special instructions.
 
@@ -346,7 +367,7 @@ Response:
     },
     "shop_wallet_address": "0xShopWallet...",
     "items": [
-      { "product_name": "Product", "price_jpyc": "1500.000000000000000000", "quantity": 1, "discount_amount": "150.000000000000000000" }
+      { "product_name": "Product", "price_jpyc": "1500.000000000000000000", "quantity": 1, "variant_info": "挽き方: 粉に挽く, サイズ: 200g", "discount_amount": "150.000000000000000000" }
     ]
   }
 }
@@ -473,7 +494,7 @@ Response:
         "discount_jpyc": "150.000000000000000000",
         "order_status": 2,
         "tx_hash": null,
-        "items": [{ "product_id": "uuid", "product_name": "Product", "price_jpyc": "1500.000000000000000000", "quantity": 1, "discount_amount": "150.000000000000000000" }]
+        "items": [{ "product_id": "uuid", "product_name": "Product", "price_jpyc": "1500.000000000000000000", "quantity": 1, "variant_info": "挽き方: 粉に挽く, サイズ: 200g", "discount_amount": "150.000000000000000000" }]
       }
     ]
   }
@@ -538,6 +559,7 @@ async function purchaseFromJpycEc(
   productId: string,
   quantity: number,
   chainId: number,
+  variantSelections?: Record<string, string>,
   shipping?: {
     prefecture: string
     address1: string
@@ -557,6 +579,12 @@ async function purchaseFromJpycEc(
   const product = shopRes.data.products.find((p: any) => p.id === productId)
   if (!product) throw new Error("Product not found")
   if (product.stock < quantity) throw new Error("Insufficient stock")
+
+  // Validate variant selections
+  if (product.variants && !variantSelections) {
+    const optionNames = product.variants.options.map((o: any) => o.name).join(", ")
+    throw new Error(`This product requires variant selections: ${optionNames}`)
+  }
 
   // 2. Calculate total (for balance check)
   const priceInt = Math.floor(parseFloat(product.price_jpyc))
@@ -599,7 +627,11 @@ async function purchaseFromJpycEc(
     shop_id: shopRes.data.shop.id,
     customer_address: account.address,
     chain_id: chainId,
-    items: [{ product_id: productId, quantity }],
+    items: [{
+      product_id: productId,
+      quantity,
+      ...(variantSelections ? { variant_selections: variantSelections } : {}),
+    }],
   }
   if (shipping) {
     orderBody.customer_name = shipping.name
