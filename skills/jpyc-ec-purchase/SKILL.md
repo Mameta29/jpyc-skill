@@ -139,7 +139,33 @@ Response:
       "name": "Shop Name",
       "wallet_address": "0x...",
       "available_chains": [137, 43114],
-      "default_chain_id": 137
+      "default_chain_id": 137,
+      "checkout_options": [
+        {
+          "id": "noshi",
+          "name": "のし",
+          "type": "select",
+          "required": false,
+          "values": [
+            { "label": "紅白蝶結び", "surcharge_jpyc": "0" },
+            { "label": "紅白結び切り", "surcharge_jpyc": "0" }
+          ]
+        },
+        {
+          "id": "message",
+          "name": "メッセージカード",
+          "type": "text",
+          "required": false,
+          "max_length": 100
+        },
+        {
+          "id": "gift_wrap",
+          "name": "ギフト包装",
+          "type": "checkbox",
+          "required": false,
+          "surcharge_jpyc": "300"
+        }
+      ]
     },
     "products": [
       {
@@ -184,6 +210,15 @@ Response:
 - `review_count`: Number of visible reviews
 - `has_nft_discount`: Whether this product is eligible for NFT/SBT holder discounts
 - `has_nft_discounts`: Whether the shop has any active NFT discount rules
+- `shop.checkout_options`: **Shop-level** options that apply to the entire order (NOT per-product). Examples: のし (gift wrap label), 到着時間 (delivery time), メッセージカード (gift message). Each definition has:
+  - `id`: stable identifier (e.g., `"noshi"`, `"delivery_time"`)
+  - `name`: display label
+  - `type`: `"select"` (choose one of `values[].label`), `"text"` (freeform up to `max_length`), or `"checkbox"` (boolean)
+  - `required`: whether the buyer MUST provide a value
+  - For `select`: each entry in `values` has a `surcharge_jpyc` that's added to the order total if selected
+  - For `checkbox`: `surcharge_jpyc` is added if the value is `true`
+  - For `text`: no surcharge, `max_length` enforces text length
+  - When creating an order, send the selected values in `checkout_options` (see Step 6)
 
 ### Step 3: Get Product Details (optional)
 
@@ -336,13 +371,26 @@ Content-Type: application/json
   "shipping_address1": "渋谷区神南1-2-3",
   "shipping_address2": "ABCビル 101",
   "shipping_zip": "150-0041",
-  "shipping_tel": "03-1234-5678"
+  "shipping_tel": "03-1234-5678",
+  "checkout_options": {
+    "noshi": "紅白蝶結び",
+    "message": "おめでとうございます",
+    "gift_wrap": true
+  }
 }
 ```
 
 **Shipping fields** are required only if ANY product has `requires_shipping: true`. For digital products, omit them.
 
 **Variant selections**: If a product has `variants` (not null), you MUST include `variant_selections` in the item. This is a key-value object mapping each option name to the chosen value (e.g., `{"挽き方": "粉に挽く", "サイズ": "200g"}`). Omitting `variant_selections` for a product with variants will return a validation error. For products without variants, omit the field.
+
+**Checkout options**: If the shop defines `checkout_options` (see Step 2), build an object keyed by option `id`:
+- `select` → the chosen `label` string (must match one of the option's `values[].label`)
+- `text` → freeform string (length ≤ `max_length`)
+- `checkbox` → `true` or `false`
+- Omit unselected non-required options entirely
+- Required options MUST be present, otherwise the request returns a 400 validation error
+- `surcharge_jpyc` from chosen values/checked checkboxes is added to `total_jpyc` automatically — do NOT add it client-side
 
 **Optional field**: `customer_note` (max 2000 chars) for special instructions.
 
@@ -360,9 +408,14 @@ Response:
       "subtotal_jpyc": "1500.000000000000000000",
       "discount_jpyc": "150.000000000000000000",
       "shipping_jpyc": "800.000000000000000000",
-      "total_jpyc": "2150.000000000000000000",
+      "total_jpyc": "2450.000000000000000000",
       "chain_id": 137,
       "order_status": 1,
+      "checkout_options": {
+        "noshi": "紅白蝶結び",
+        "message": "おめでとうございます",
+        "gift_wrap": true
+      },
       "created_at": "2026-04-08T..."
     },
     "shop_wallet_address": "0xShopWallet...",
@@ -490,10 +543,15 @@ Response:
       {
         "id": "uuid",
         "order_number": "ORD-XXXXXX",
-        "total_jpyc": "2150.000000000000000000",
+        "total_jpyc": "2450.000000000000000000",
         "discount_jpyc": "150.000000000000000000",
         "order_status": 2,
         "tx_hash": null,
+        "checkout_options": {
+          "noshi": "紅白蝶結び",
+          "message": "おめでとうございます",
+          "gift_wrap": true
+        },
         "items": [{ "product_id": "uuid", "product_name": "Product", "price_jpyc": "1500.000000000000000000", "quantity": 1, "variant_info": "挽き方: 粉に挽く, サイズ: 200g", "discount_amount": "150.000000000000000000" }]
       }
     ]
@@ -642,6 +700,12 @@ async function purchaseFromJpycEc(
     orderBody.shipping_zip = shipping.zip
     orderBody.shipping_tel = shipping.tel
   }
+  // If the shop has shop.checkout_options, build values keyed by definition id:
+  //   - select → chosen label string
+  //   - text   → freeform string (≤ max_length)
+  //   - checkbox → true/false
+  // Required options MUST be present; surcharge is added server-side to total_jpyc.
+  // Example: orderBody.checkout_options = { noshi: "紅白蝶結び", gift_wrap: true }
 
   const orderRes = await fetch(`${API_BASE}/orders`, {
     method: "POST",
