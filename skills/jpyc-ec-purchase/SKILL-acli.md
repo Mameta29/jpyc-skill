@@ -1,720 +1,330 @@
 ---
-name: jpyc-ec-purchase
-description: Purchase products from JPYC EC Platform using JPYC stablecoin. Use when you or the user want to buy products from a JPYC EC shop, browse shops, check product availability, or complete a purchase with gasless EIP-3009 payment.
-user-invocable: true
-disable-model-invocation: false
-allowed-tools: ["Bash(curl *)", "Bash(node * balance *)", "Bash(node * wallet *)", "Bash(node * sign *)"]
+name: jpyc-ec-purchase-acli
+description: Purchase products from JPYC EC Platform via x402 using shell/curl-style commands. For agents that prefer direct HTTP over SDKs.
 ---
 
-# JPYC EC Purchase
+# JPYC EC Purchase Skill (acli / curl)
 
-Purchase products from **JPYC EC Platform** shops using JPYC (Japanese Yen Stablecoin, 1 JPYC ≈ 1 JPY) with gasless EIP-3009 payments. The buyer pays **zero gas fees** — only an EIP-712 signature is required.
-
-## ⚠️ Important Notes
-
-| Item | Detail |
-|------|--------|
-| **Gas cost for buyer** | **Zero** (signature only) |
-| **Authentication** | None required — wallet address + signature = identity |
-| **Minimum order** | 100 JPYC |
-| **Signature validity** | Default 3 days (varies by shop) |
-| **Rate limit** | 10 order creations per minute |
-
-## Environments & Supported Chains
-
-Each environment only accepts its own chain type. Using a testnet chain ID on Production (or mainnet on Staging) will return `INVALID_CHAIN`.
-
-### Production: `https://ec.jpyc-service.com/api/v1`
-
-| Chain | Chain ID | acli chain name |
-|-------|----------|----------------|
-| Ethereum | 1 | ethereum |
-| Polygon | 137 | polygon |
-| Avalanche | 43114 | avalanche |
-
-### Staging (for testing): `https://stg-ec.jpyc-service.com/api/v1`
-
-| Chain | Chain ID | acli chain name |
-|-------|----------|----------------|
-| Sepolia | 11155111 | sepolia |
-| Polygon Amoy | 80002 | polygon-amoy |
-| Avalanche Fuji | 43113 | avalanche-fuji |
-
-**JPYC Contract Address** (same on all chains, both mainnet and testnet):
-```
-0xE7C3D8C9a439feDe00D2600032D5dB0Be71C3c29
-```
-
-Additionally, each shop has its own `available_chains` array (returned in API responses). The `chain_id` used in an order **must** be in the shop's `available_chains`.
+`SKILL.md` の curl / shell コマンド版。**TypeScript SDK が使えない環境** (CLI
+エージェント、シェルベースの自動化、debug 用 acli 等) でも完走できるように、
+全リクエストを `curl` で完結する形にしてあります。署名生成だけは EIP-712
+ライブラリが要るので、`viem` の小さなインライン Node スクリプト経由で示します。
 
 ---
 
-## Complete Purchase Flow
+## Decision tree (必ず最初に実行)
 
-### Step 1: Get Wallet Address
+```
+1. GET  /api/v1/products/{id}                ← requires_shipping / variants 確認
+2. POST /api/v1/products/{id}/checkout       ← 402 + reservation_id
+       (no PAYMENT-SIGNATURE)
+3. EIP-712 sign + build PaymentPayload
+4. POST /api/v1/products/{id}/checkout       ← 200 + 注文成立
+       (with PAYMENT-SIGNATURE)
+```
+
+`requires_shipping=true` の商品で住所を渡さないと `400 shipping_required` が返ります。
+これは **支払えば解決する問題ではない** ので、エージェントは住所を聞いて step 2 から
+やり直してください。
+
+---
+
+## Step 1 — Product info
 
 ```bash
-# Get wallet info to find your address
-node <acli-path> wallet info --name <wallet-name>
+curl -sS https://ec.jpyc-service.com/api/v1/products/{PRODUCT_ID} | jq .
 ```
 
-Extract the wallet address for the target chain from the response.
+重要フィールド:
 
-### Step 2: Browse Shops
+- `data.product.requires_shipping` (bool) — true なら shipping ブロック必須
+- `data.product.variants` (object | null) — 非 null ならバリエーション選択必須
+- `data.shop.available_chains` (number[]) — 払えるチェーン ID
+- `data.shop.default_chain_id` — チェーン指定省略時のデフォルト
+
+エラー:
+
+- `404 PRODUCT_NOT_FOUND`
+- `500 INTERNAL_ERROR`
+
+---
+
+## Step 2 — Request 402 challenge
 
 ```bash
-curl -s https://ec.jpyc-service.com/api/v1/shops | jq .
-```
-
-Expected output:
-```json
-{
-  "ok": true,
-  "data": {
-    "shops": [
-      {
-        "id": "uuid",
-        "slug": "shop-slug",
-        "name": "Shop Name",
-        "description": "Shop description",
-        "logo_url": "https://...",
-        "available_chains": [137, 43114],
-        "default_chain_id": 137,
-        "free_shipping_threshold": "5000",
-        "category": "食品,飲料",
-        "stock_display_mode": "exact",
-        "low_stock_threshold": 5
-      }
-    ]
-  }
-}
-```
-
-`stock_display_mode` values: `"exact"` (show exact count), `"low_stock_only"` (show "low stock" when below threshold), `"hidden"` (hide stock count, only show out-of-stock)
-
-### Step 2.5: Browse Categories (optional)
-
-```bash
-curl -s https://ec.jpyc-service.com/api/v1/categories | jq .
-```
-
-Expected output:
-```json
-{
-  "ok": true,
-  "data": {
-    "shop_categories": ["クリエイター", "サービス", "その他", "書籍", "雑貨", "食品", "飲料"],
-    "product_categories": ["カメラ用品", "タロット占い", "写真集", "書籍"],
-    "product_tags": ["お米", "おつまみ", "ぬか炊き", "北九州"]
-  }
-}
-```
-
-Use these categories to help users filter shops and products.
-
-### Step 3: Browse Products
-
-```bash
-curl -s https://ec.jpyc-service.com/api/v1/shops/<shop-slug>/products | jq .
-```
-
-Expected output:
-```json
-{
-  "ok": true,
-  "data": {
-    "shop": {
-      "id": "uuid",
-      "slug": "shop-slug",
-      "name": "Shop Name",
-      "wallet_address": "0xShopWallet...",
-      "available_chains": [137, 43114],
-      "default_chain_id": 137,
-      "category": "食品,飲料",
-      "stock_display_mode": "exact",
-      "low_stock_threshold": 5,
-      "checkout_options": [
-        {
-          "id": "noshi",
-          "name": "のし",
-          "type": "select",
-          "required": false,
-          "values": [
-            { "label": "紅白蝶結び", "surcharge_jpyc": "0" },
-            { "label": "紅白結び切り", "surcharge_jpyc": "0" }
-          ]
-        },
-        {
-          "id": "message",
-          "name": "メッセージカード",
-          "type": "text",
-          "required": false,
-          "max_length": 100
-        },
-        {
-          "id": "gift_wrap",
-          "name": "ギフト包装",
-          "type": "checkbox",
-          "required": false,
-          "surcharge_jpyc": "300"
-        }
-      ]
-    },
-    "products": [
-      {
-        "id": "uuid",
-        "name": "Product Name",
-        "description": "...",
-        "price_jpyc": "1500.000000000000000000",
-        "stock": 10,
-        "image_urls": ["https://..."],
-        "category": "コーヒー",
-        "tags": ["珈琲", "産地直送"],
-        "requires_shipping": true,
-        "grants_free_shipping": false,
-        "variants": {
-          "options": [
-            { "name": "挽き方", "values": ["豆のまま", "粉に挽く"] },
-            { "name": "サイズ", "values": ["200g", "400g"] }
-          ],
-          "skus": [
-            { "options": { "挽き方": "豆のまま", "サイズ": "200g" }, "price_jpyc": null },
-            { "options": { "挽き方": "豆のまま", "サイズ": "400g" }, "price_jpyc": "2380" }
-          ]
-        },
-        "review_avg_rating": 4.5,
-        "review_count": 3,
-        "has_nft_discount": true
-      }
-    ],
-    "has_nft_discounts": true
-  }
-}
-```
-
-**Note**: `price_jpyc` is a string with 18 decimal places. Use the integer part for calculations (e.g., "1500.000000000000000000" → 1500 JPYC).
-
-- `variants`: Product options (e.g., size, grind type). `null` if no variants. Each SKU may have a `price_jpyc` override — if null, use the product's base price. When ordering, you **must** include `variant_selections` in the item (see Step 6).
-- `review_avg_rating`: Average rating (1-5) or `null` if no reviews
-- `review_count`: Number of visible reviews
-- `has_nft_discount`: Whether this product is eligible for NFT/SBT holder discounts
-- `shop.checkout_options`: **Shop-level** options that apply to the whole order (NOT per-product). Common uses: のし (gift wrap label), 到着時間 (delivery time), メッセージカード (gift message). Each definition has `id`, `name`, `type` (`select` | `text` | `checkbox`), `required` flag, and type-specific fields. When creating an order, send the selected values as `checkout_options` keyed by `id` (see Step 6). Surcharges from chosen values/checked boxes are added to `total_jpyc` automatically.
-- `has_nft_discounts`: Whether the shop has any active NFT discount rules
-
-**Important**: Save `shop.wallet_address` — it is needed for the EIP-712 signature in Step 7.
-
-### Step 3.5: Get Product Details (optional)
-
-```bash
-curl -s https://ec.jpyc-service.com/api/v1/products/<product-id> | jq .
-```
-
-Returns product details with shop info including `shop.wallet_address`, plus `variants`, `review_avg_rating`, `review_count`, and `has_nft_discount`.
-
-### Step 3.6: Get Product Reviews (optional)
-
-```bash
-curl -s https://ec.jpyc-service.com/api/v1/products/<product-id>/reviews | jq .
-```
-
-Expected output:
-```json
-{
-  "ok": true,
-  "data": {
-    "product_id": "uuid",
-    "avg_rating": 4.5,
-    "review_count": 3,
-    "reviews": [
-      {
-        "id": "uuid",
-        "customer_address": "0xF243...E853",
-        "rating": 5,
-        "title": "とても良い商品です",
-        "content": "品質が高くて満足しました。",
-        "created_at": "2026-04-20T..."
-      }
-    ]
-  }
-}
-```
-
-Customer addresses are masked for privacy. Reviews are only from verified purchasers.
-
-### Step 3.7: Check NFT Discount Rules (optional)
-
-```bash
-curl -s https://ec.jpyc-service.com/api/v1/shops/<shop-slug>/nft-discounts | jq .
-```
-
-Expected output:
-```json
-{
-  "ok": true,
-  "data": {
-    "shop_id": "uuid",
-    "discount_rules": [
-      {
-        "id": "uuid",
-        "name": "JPYC Supporters SBT",
-        "contract_address": "0xabc...def",
-        "chain_id": 137,
-        "condition_type": "balance",
-        "condition_value": { "min_balance": 1 },
-        "discount_type": "percentage",
-        "discount_value": "10.00",
-        "apply_to_all": true,
-        "product_ids": "all"
-      }
-    ]
-  }
-}
-```
-
-If `apply_to_all` is `false`, `product_ids` will be an array of product UUIDs that the discount applies to. The agent can check if it holds the required NFT/SBT to determine discount eligibility.
-
-### Step 4: Calculate Shipping Fee (if product requires shipping)
-
-Skip this step if `requires_shipping` is `false`.
-
-```bash
-curl -s -X POST https://ec.jpyc-service.com/api/v1/shipping/fee \
+curl -i -sS \
+  -X POST \
   -H "Content-Type: application/json" \
-  -d '{
-    "shop_id": "<shop-id>",
-    "prefecture": "東京都",
-    "items": [{"product_id": "<product-id>", "quantity": 1}],
-    "city": "渋谷区"
-  }' | jq .
-```
-
-Expected output:
-```json
-{
-  "ok": true,
-  "data": {
-    "shipping_fee": "800",
-    "reason": "standard_rate"
-  }
-}
-```
-
-Reason values:
-| Reason | Meaning |
-|--------|---------|
-| `standard_rate` | Normal prefecture-based rate |
-| `free_shipping_product` | Product has free shipping |
-| `threshold_met` | Order total exceeds free shipping threshold |
-| `local_delivery` | Local delivery rate applied |
-| `no_shipping_items` | No items require shipping |
-| `no_rate_configured` | Prefecture not available — **cannot ship** |
-
-### Step 5: Check JPYC Balance
-
-```bash
-# Using acli
-node <acli-path> balance --name <wallet-name> --chain <chain> --token JPYC
-
-# Or using API
-curl -s -X POST https://ec.jpyc-service.com/api/v1/balance/check \
-  -H "Content-Type: application/json" \
-  -d '{
-    "address": "0xYourWalletAddress",
-    "required_amount": "2300",
-    "chain_id": 137
-  }' | jq .
-```
-
-API response:
-```json
-{
-  "ok": true,
-  "data": {
-    "sufficient": true,
-    "balance": "5000.0",
-    "required": "2300"
-  }
-}
-```
-
-**CRITICAL**: Always check balance BEFORE creating an order. If `sufficient` is `false`, do **not** proceed.
-
-### Step 6: Create Order
-
-```bash
-curl -s -X POST https://ec.jpyc-service.com/api/v1/orders \
-  -H "Content-Type: application/json" \
-  -d '{
-    "shop_id": "<shop-id>",
-    "customer_address": "0xYourWalletAddress",
-    "customer_name": "Your Name",
-    "customer_email": "user@example.com",
-    "chain_id": 137,
-    "items": [{"product_id": "<product-id>", "quantity": 1, "variant_selections": {"挽き方": "粉に挽く", "サイズ": "200g"}}],
-    "shipping_prefecture": "東京都",
-    "shipping_address1": "渋谷区神南1-2-3",
-    "shipping_address2": "ABCビル 101",
-    "shipping_zip": "150-0041",
-    "shipping_tel": "03-1234-5678",
-    "checkout_options": {
-      "noshi": "紅白蝶結び",
-      "message": "おめでとうございます",
-      "gift_wrap": true
+  --data '{
+    "quantity": 1,
+    "preferred_chain_id": 137,
+    "variant_selections": { "サイズ": "M" },
+    "shipping": {
+      "name": "山田太郎",
+      "zip": "150-0001",
+      "prefecture": "東京都",
+      "address1": "渋谷区神宮前1-2-3",
+      "tel": "090-1234-5678"
     }
-  }' | jq .
+  }' \
+  https://ec.jpyc-service.com/api/v1/products/{PRODUCT_ID}/checkout
 ```
 
-**Shipping fields** are required only if any product has `requires_shipping: true`. For digital products, omit them entirely.
+成功時 (HTTP 402):
 
-**Variant selections**: If a product has `variants` (not null), you MUST include `variant_selections` in the item — a key-value object mapping each option name to the chosen value (e.g., `{"挽き方": "粉に挽く", "サイズ": "200g"}`). Omitting it for a product with variants returns a validation error. For products without variants, omit the field.
+```
+HTTP/1.1 402 Payment Required
+PAYMENT-REQUIRED: eyJ4NDAyVmVyc2lvbiI6Mi...
+Content-Type: application/json
 
-**Checkout options**: If the shop response includes `shop.checkout_options`, send selected values keyed by definition `id`:
-- `select` → chosen `label` string (must match a `values[].label`)
-- `text` → freeform string (≤ `max_length`)
-- `checkbox` → `true` / `false`
-- Omit unselected non-required options entirely. Required options MUST be present.
-- Surcharges (per chosen value / checked box) are added to `total_jpyc` server-side; don't pre-add them client-side.
-
-Optional: `customer_note` (max 2000 chars) for special instructions.
-
-**NFT Discount**: If the buyer holds an eligible NFT/SBT (check via Step 3.7), include a `discount` object in the order request:
-
-```json
 {
-  "discount": {
-    "rule_id": "uuid-of-discount-rule",
-    "total_discount": "150",
-    "item_discounts": {
-      "product-uuid": {
-        "discount_amount": "150",
-        "rule_snapshot": "{\"id\":\"...\",\"name\":\"...\",\"discount_type\":\"percentage\",\"discount_value\":\"10\"}"
-      }
-    }
-  }
+  "ok": false,
+  "error": { "code": "payment_required", "message": "PAYMENT-SIGNATURE header is required" },
+  "data": { "reservation_id": "res_a1b2...", "expires_at_unix_ms": 1731486100000 }
 }
 ```
 
-The `total_jpyc` in the response will reflect: `subtotal - discount + shipping`.
-
-Expected output:
-```json
-{
-  "ok": true,
-  "data": {
-    "order": {
-      "id": "uuid",
-      "order_number": "ORD-XXXXXX",
-      "nonce": "0xabc123...def456",
-      "valid_after": "0",
-      "valid_before": "1712345678",
-      "subtotal_jpyc": "1500.000000000000000000",
-      "discount_jpyc": "0.000000000000000000",
-      "shipping_jpyc": "800.000000000000000000",
-      "total_jpyc": "2600.000000000000000000",
-      "chain_id": 137,
-      "order_status": 1,
-      "checkout_options": {
-        "noshi": "紅白蝶結び",
-        "message": "おめでとうございます",
-        "gift_wrap": true
-      },
-      "created_at": "2026-04-08T..."
-    },
-    "shop_wallet_address": "0xShopWallet...",
-    "items": [
-      {"product_name": "Product", "price_jpyc": "1500.000000000000000000", "quantity": 1, "variant_info": "挽き方: 粉に挽く, サイズ: 200g", "discount_amount": "0.000000000000000000"}
-    ]
-  }
-}
-```
-
-**Save these values** from the response — they are needed for signing:
-- `order.id` — for submitting the signature
-- `order.nonce` — the unique random nonce
-- `order.valid_after` — usually "0"
-- `order.valid_before` — expiry timestamp
-- `order.total_jpyc` — total amount to sign
-- `order.chain_id` — the chain for signing
-- `shop_wallet_address` — the `to` address in the signature
-
-### Step 7: Sign EIP-712 Message (using acli)
-
-Construct the EIP-712 typed data JSON and sign it with `acli sign typed-data`:
+`PAYMENT-REQUIRED` ヘッダを取り出してデコード:
 
 ```bash
-# Calculate value in wei (total_jpyc integer part × 10^18)
-# Example: 2300 JPYC → "2300000000000000000000"
+# レスポンスヘッダから抽出
+PAYMENT_REQUIRED_B64=$(curl -isS ... | awk -F': ' '/^PAYMENT-REQUIRED:/{print $2}' | tr -d '\r')
+echo "$PAYMENT_REQUIRED_B64" | base64 -d | jq .
+```
 
-node <acli-path> sign typed-data --name <wallet-name> --chain <chain> --data '{
-  "types": {
-    "EIP712Domain": [
-      {"name": "name", "type": "string"},
-      {"name": "version", "type": "string"},
-      {"name": "chainId", "type": "uint256"},
-      {"name": "verifyingContract", "type": "address"}
+デコード後の例:
+
+```json
+{
+  "x402Version": 2,
+  "accepts": [{
+    "scheme": "exact",
+    "network": "eip155:137",
+    "amount": "1500000000000000000000",
+    "asset": "0xE7C3D8C9a439feDe00D2600032D5dB0Be71C3c29",
+    "payTo": "0xShopWallet...",
+    "maxTimeoutSeconds": 90,
+    "extra": { "assetTransferMethod": "eip3009", "name": "JPY Coin", "version": "1", "decimals": 18, "symbol": "JPYC" }
+  }]
+}
+```
+
+リクエストボディのフィールド対応表:
+
+| フィールド | 必須 | メモ |
+|-----------|------|------|
+| `quantity` | ✅ | int > 0 |
+| `preferred_chain_id` | 任意 | `shop.available_chains` 内のいずれか |
+| `variant_selections` | `variants !== null` のとき必須 | `{ option_name: value }` |
+| `shipping` | `requires_shipping === true` のとき必須 | name / zip / prefecture / address1 / tel が必須 |
+| `customer_note` | 任意 | max 2000 文字 |
+
+エラーコード:
+
+- `400 invalid_body` / `400 invalid_quantity`
+- `400 shipping_required` ← 住所聞いてリトライ
+- `400 variant_required` / `400 invalid_variant`
+- `400 x402_disabled` ← このショップは x402 未対応
+- `404 product_not_found` / `404 shop_not_found`
+- `409 insufficient_stock`
+- `429 rate_limited` (30 req/60s/IP)
+
+---
+
+## Step 3 — Sign EIP-712 (inline Node script)
+
+純粋な shell では EIP-712 署名は厳しいので、`viem` の最小 Node スクリプトを使います。
+
+```bash
+cat > /tmp/sign-x402.mjs <<'EOF'
+import { privateKeyToAccount } from "viem/accounts"
+import { randomBytes } from "node:crypto"
+
+const accepts = JSON.parse(process.argv[2])
+const buyerKey = process.env.BUYER_PRIVATE_KEY
+if (!buyerKey) throw new Error("BUYER_PRIVATE_KEY missing")
+const account = privateKeyToAccount(buyerKey)
+
+const validAfter = 0n
+const validBefore = BigInt(Math.floor(Date.now() / 1000) + accepts.maxTimeoutSeconds)
+const nonce = "0x" + randomBytes(32).toString("hex")
+
+const signature = await account.signTypedData({
+  domain: {
+    name: accepts.extra.name,
+    version: accepts.extra.version,
+    chainId: Number(accepts.network.split(":")[1]),
+    verifyingContract: accepts.asset,
+  },
+  types: {
+    TransferWithAuthorization: [
+      { name: "from", type: "address" },
+      { name: "to", type: "address" },
+      { name: "value", type: "uint256" },
+      { name: "validAfter", type: "uint256" },
+      { name: "validBefore", type: "uint256" },
+      { name: "nonce", type: "bytes32" },
     ],
-    "ReceiveWithAuthorization": [
-      {"name": "from", "type": "address"},
-      {"name": "to", "type": "address"},
-      {"name": "value", "type": "uint256"},
-      {"name": "validAfter", "type": "uint256"},
-      {"name": "validBefore", "type": "uint256"},
-      {"name": "nonce", "type": "bytes32"}
-    ]
   },
-  "primaryType": "ReceiveWithAuthorization",
-  "domain": {
-    "name": "JPY Coin",
-    "version": "1",
-    "chainId": "<chain-id>",
-    "verifyingContract": "0xE7C3D8C9a439feDe00D2600032D5dB0Be71C3c29"
+  primaryType: "TransferWithAuthorization",
+  message: {
+    from: account.address,
+    to: accepts.payTo,
+    value: BigInt(accepts.amount),
+    validAfter,
+    validBefore,
+    nonce,
   },
-  "message": {
-    "from": "<your-wallet-address>",
-    "to": "<shop-wallet-address>",
-    "value": "<total-in-wei>",
-    "validAfter": "<valid_after>",
-    "validBefore": "<valid_before>",
-    "nonce": "<nonce-from-order>"
-  }
-}'
-```
+})
 
-**Critical requirements for signing**:
-- `domain.name` MUST be exactly `"JPY Coin"`
-- `domain.version` MUST be exactly `"1"`
-- `domain.verifyingContract` MUST be `0xE7C3D8C9a439feDe00D2600032D5dB0Be71C3c29`
-- `message.from` MUST be your wallet address (same as `customer_address` in order)
-- `message.to` MUST be `shop_wallet_address` from the order response
-- `message.value` MUST be total amount in wei (integer part of `total_jpyc` × 10^18)
-- `message.nonce` MUST be the exact nonce from order response
-
-**Converting total_jpyc to wei**:
-```
-total_jpyc = "2300.000000000000000000"
-Integer part = 2300
-Value in wei = "2300000000000000000000"  (2300 followed by 18 zeros)
-```
-
-Expected output:
-```json
-{
-  "ok": true,
-  "data": {
-    "signature": "0x..."
-  }
+const payload = {
+  x402Version: 2,
+  accepted: accepts,
+  payload: {
+    signature,
+    authorization: {
+      from: account.address,
+      to: accepts.payTo,
+      value: accepts.amount,
+      validAfter: validAfter.toString(),
+      validBefore: validBefore.toString(),
+      nonce,
+    },
+  },
 }
+console.log(Buffer.from(JSON.stringify(payload)).toString("base64url"))
+EOF
+
+ACCEPTS_JSON=$(echo "$PAYMENT_REQUIRED_B64" | base64 -d | jq -c '.accepts[0]')
+PAYMENT_SIGNATURE=$(BUYER_PRIVATE_KEY=0x... node /tmp/sign-x402.mjs "$ACCEPTS_JSON")
 ```
 
-### Step 8: Submit Signature
+---
+
+## Step 4 — Settle
 
 ```bash
-curl -s -X POST https://ec.jpyc-service.com/api/v1/orders/<order-id>/signature \
+RESERVATION_ID="res_a1b2..."  # step 2 のレスポンスから取得
+
+curl -i -sS \
+  -X POST \
   -H "Content-Type: application/json" \
-  -d '{
-    "signature": "0x...",
-    "customer_address": "0xYourWalletAddress"
-  }' | jq .
+  -H "PAYMENT-SIGNATURE: $PAYMENT_SIGNATURE" \
+  --data "{\"reservation_id\":\"$RESERVATION_ID\"}" \
+  https://ec.jpyc-service.com/api/v1/products/{PRODUCT_ID}/checkout
 ```
 
-Expected output:
-```json
+成功 (HTTP 200):
+
+```
+HTTP/1.1 200 OK
+PAYMENT-RESPONSE: eyJzdWNjZXNzIjp0cnVlLC...
+
 {
   "ok": true,
   "data": {
     "order_id": "uuid",
-    "order_number": "ORD-XXXXXX",
-    "order_status": 2,
-    "signed_at": "2026-04-08T..."
+    "order_number": "ORD-2026-...",
+    "tx_hash": "0x<64hex>",
+    "network": "eip155:137",
+    "payer": "0x<agent>",
+    "amount_atomic": "1500000000000000000000"
   }
 }
 ```
 
-**Purchase complete!** The shop owner will collect the signature and execute the on-chain payment. No further action needed from the buyer.
+エラー (status / code):
 
-### Step 9: Track Orders (optional)
-
-```bash
-curl -s "https://ec.jpyc-service.com/api/v1/orders?customer_address=0xYourWalletAddress" | jq .
-```
-
-Order status values:
-
-| Status | Meaning |
-|--------|---------|
-| 1 | Created (awaiting signature) |
-| 2 | Signed (awaiting shop collection) |
-| 3 | Collected (payment complete, on-chain verified) |
-| 9 | Expired or cancelled |
+| Status | Code | 行動 |
+|--------|------|------|
+| 400 | `invalid_payment_payload` | base64 / JSON を見直し |
+| 400 | `payload_mismatch` | step 2 からやり直し |
+| 402 | `invalid_exact_evm_payload_signature` | 再署名 |
+| 402 | `invalid_exact_evm_payload_authorization_valid_before` | reservation 期限切れ→step 2 やり直し |
+| 402 | `insufficient_funds` | JPYC 残高不足 |
+| 404 | `reservation_not_found` | 5 分超過→step 2 やり直し |
+| 404 | `product_disappeared` | 商品削除 |
+| 409 | `insufficient_stock` / `shop_wallet_changed` | step 2 からやり直し |
+| 429 | `rate_limited` | 数秒待ち |
+| 502 | `settlement_failed` / `facilitator_insufficient_native_balance` | リトライ |
 
 ---
 
-## Detailed Examples
+## Other endpoints (acli)
 
-### Example 1: Buy a Physical Product (Full Flow)
-
-```bash
-# 1. Get wallet address
-node <acli-path> wallet info --name my-wallet
-# → Note the address for polygon (chainId: eip155:137): 0xABC...
-
-# 2. Browse shops
-curl -s https://ec.jpyc-service.com/api/v1/shops | jq '.data.shops[] | {slug, name, available_chains}'
-# → Found shop "oumi-rice" on chain 137
-
-# 3. Browse products
-curl -s https://ec.jpyc-service.com/api/v1/shops/oumi-rice/products | jq .
-# → Found product id "prod-123", price 3000 JPYC, requires_shipping: true
-# → Shop wallet: 0xShop123...
-
-# 4. Calculate shipping
-curl -s -X POST https://ec.jpyc-service.com/api/v1/shipping/fee \
-  -H "Content-Type: application/json" \
-  -d '{"shop_id":"shop-uuid","prefecture":"東京都","items":[{"product_id":"prod-123","quantity":1}]}' | jq .
-# → shipping_fee: "800"
-
-# 5. Check balance (total = 3000 + 800 = 3800)
-curl -s -X POST https://ec.jpyc-service.com/api/v1/balance/check \
-  -H "Content-Type: application/json" \
-  -d '{"address":"0xABC...","required_amount":"3800","chain_id":137}' | jq .
-# → sufficient: true
-
-# 6. Create order
-curl -s -X POST https://ec.jpyc-service.com/api/v1/orders \
-  -H "Content-Type: application/json" \
-  -d '{
-    "shop_id":"shop-uuid",
-    "customer_address":"0xABC...",
-    "customer_name":"田中太郎",
-    "customer_email":"tanaka@example.com",
-    "chain_id":137,
-    "items":[{"product_id":"prod-123","quantity":1,"variant_selections":{"挽き方":"粉に挽く","サイズ":"200g"}}],
-    "shipping_prefecture":"東京都",
-    "shipping_address1":"渋谷区神南1-2-3",
-    "shipping_zip":"150-0041",
-    "shipping_tel":"03-1234-5678"
-  }' | jq .
-# → order.id: "order-uuid", nonce: "0xabc...", total_jpyc: "3800.000000000000000000"
-# → shop_wallet_address: "0xShop123..."
-
-# 7. Sign (3800 JPYC = "3800000000000000000000" wei)
-node <acli-path> sign typed-data --name my-wallet --chain polygon --data '{
-  "types":{"EIP712Domain":[{"name":"name","type":"string"},{"name":"version","type":"string"},{"name":"chainId","type":"uint256"},{"name":"verifyingContract","type":"address"}],"ReceiveWithAuthorization":[{"name":"from","type":"address"},{"name":"to","type":"address"},{"name":"value","type":"uint256"},{"name":"validAfter","type":"uint256"},{"name":"validBefore","type":"uint256"},{"name":"nonce","type":"bytes32"}]},
-  "primaryType":"ReceiveWithAuthorization",
-  "domain":{"name":"JPY Coin","version":"1","chainId":"137","verifyingContract":"0xE7C3D8C9a439feDe00D2600032D5dB0Be71C3c29"},
-  "message":{"from":"0xABC...","to":"0xShop123...","value":"3800000000000000000000","validAfter":"0","validBefore":"1712345678","nonce":"0xabc..."}
-}'
-# → signature: "0xSIG..."
-
-# 8. Submit signature
-curl -s -X POST https://ec.jpyc-service.com/api/v1/orders/order-uuid/signature \
-  -H "Content-Type: application/json" \
-  -d '{"signature":"0xSIG...","customer_address":"0xABC..."}' | jq .
-# → order_status: 2 — Purchase complete!
-```
-
-### Example 2: Buy a Digital Product (No Shipping)
+### Shop / product 一覧
 
 ```bash
-# Digital products don't require shipping fields
-curl -s -X POST https://ec.jpyc-service.com/api/v1/orders \
+curl -sS https://ec.jpyc-service.com/api/v1/shops | jq .
+curl -sS https://ec.jpyc-service.com/api/v1/shops/{SLUG}/products | jq .
+curl -sS https://ec.jpyc-service.com/api/v1/products/{PRODUCT_ID}/reviews | jq .
+curl -sS https://ec.jpyc-service.com/api/v1/categories | jq .
+```
+
+### 注文履歴
+
+```bash
+curl -sS "https://ec.jpyc-service.com/api/v1/orders?customer_address=0x..." | jq .
+```
+
+`order_status` の意味: 1=未署名 (レガシー経路のみ), 2=署名済み (レガシー経路のみ), 3=決済完了 (**x402 はここから開始**), 9=期限切れ。
+
+### NFT 割引ルール
+
+```bash
+curl -sS https://ec.jpyc-service.com/api/v1/shops/{SLUG}/nft-discounts | jq .
+```
+
+x402 経路は現在 NFT 割引未対応。NFT 割引を活用したい購入は既存レガシー経路を使う。
+
+### 残高チェック (任意)
+
+```bash
+curl -sS -X POST \
   -H "Content-Type: application/json" \
-  -d '{
-    "shop_id":"shop-uuid",
-    "customer_address":"0xABC...",
-    "chain_id":137,
-    "items":[{"product_id":"digital-prod-id","quantity":1}]
-  }' | jq .
-
-# Then sign and submit as usual (Steps 7-8)
+  --data '{"address":"0x...","required_amount":"1500","chain_id":137}' \
+  https://ec.jpyc-service.com/api/v1/balance/check | jq .
 ```
 
-### Example 3: Error Cases
+実用上は step 4 で `insufficient_funds` が返るので事前 check は省略可能。
 
-**Insufficient balance**:
-```json
-{
-  "ok": true,
-  "data": {
-    "sufficient": false,
-    "balance": "100.0",
-    "required": "3800"
-  }
-}
-```
-→ Do NOT proceed. Inform the user they need more JPYC.
+### 配送料試算 (任意)
 
-**Out of stock**:
-```json
-{
-  "ok": false,
-  "error": {
-    "code": "INSUFFICIENT_STOCK",
-    "message": "Not enough stock for product: Product Name"
-  }
-}
+```bash
+curl -sS -X POST \
+  -H "Content-Type: application/json" \
+  --data '{"shop_id":"uuid","prefecture":"東京都","items":[{"product_id":"uuid","quantity":1}]}' \
+  https://ec.jpyc-service.com/api/v1/shipping/fee | jq .
 ```
 
-**Signature expired (tried to submit after validity period)**:
-```json
-{
-  "ok": false,
-  "error": {
-    "code": "SIGNATURE_EXPIRED",
-    "message": "Order signature period has expired"
-  }
-}
+ただし x402 経路は **1 回目の checkout 時点で送料込みの amount を確定** するので、
+事前試算は UI 表示用途のみ。署名する金額は必ず `PAYMENT-REQUIRED.accepts[0].amount`
+を使ってください。
+
+---
+
+## Environments
+
+| 環境 | Base URL | チェーン ID |
+|------|---------|------------|
+| Production | `https://ec.jpyc-service.com` | 1 / 137 / 43114 |
+| Staging | `https://stg-ec.jpyc-service.com` | 11155111 / 80002 / 43113 / 1001 / 5042002 |
+
+メインネット ID をステージングに送ると `INVALID_CHAIN` エラー。
+
+---
+
+## Sanity-check snippet
+
+step 2 が正しく動いているかの最小確認:
+
+```bash
+curl -isS -X POST \
+  -H "Content-Type: application/json" \
+  -d '{"quantity":1}' \
+  https://ec.jpyc-service.com/api/v1/products/{PRODUCT_ID}/checkout \
+  | head -20
 ```
-→ Create a new order and sign again.
 
-**Prefecture not available for shipping**:
-```json
-{
-  "ok": true,
-  "data": {
-    "shipping_fee": "0",
-    "reason": "no_rate_configured"
-  }
-}
-```
-→ The shop does not ship to this prefecture. Try a different prefecture or contact the shop.
-
-## Handling Shipping Address
-
-If a product requires shipping (`requires_shipping: true`), you need:
-- `shipping_prefecture`: Japanese prefecture (e.g., "東京都", "大阪府", "北海道")
-- `shipping_address1`: City, ward, and street (e.g., "渋谷区神南1-2-3")
-- `shipping_address2`: Building name, room number (optional)
-- `shipping_zip`: Postal code (e.g., "150-0041")
-- `shipping_tel`: Phone number (e.g., "03-1234-5678")
-
-**If you don't know the user's shipping address, ask them before creating the order.**
-
-## Error Codes Reference
-
-| Code | HTTP | Description |
-|------|------|-------------|
-| `VALIDATION_ERROR` | 400 | Invalid request body |
-| `INVALID_ADDRESS` | 400 | Malformed Ethereum address |
-| `INVALID_AMOUNT` | 400 | Invalid amount value |
-| `INVALID_CHAIN` | 400 | Unsupported chain ID |
-| `INVALID_SIGNATURE` | 400 | Malformed signature |
-| `INVALID_STATUS` | 400 | Order not in expected status |
-| `ADDRESS_MISMATCH` | 400 | Customer address doesn't match order |
-| `SIGNATURE_EXPIRED` | 400 | Signature validity period expired |
-| `SHOP_NOT_FOUND` | 404 | Shop not found or not published |
-| `PRODUCT_NOT_FOUND` | 404 | Product not found or not published |
-| `ORDER_NOT_FOUND` | 404 | Order not found |
-| `INSUFFICIENT_STOCK` | 400 | Not enough stock available |
-| `RATE_LIMITED` | 429 | Too many requests (10/min) |
-| `BALANCE_CHECK_FAILED` | 500 | On-chain balance check failed |
-| `ORDER_CREATION_FAILED` | 500 | Order creation failed |
-| `INTERNAL_ERROR` | 500 | Unexpected server error |
-
-## Input Validation
-
-- **address**: Must be a valid Ethereum address starting with `0x` (42 characters).
-- **chain_id**: Must be one of: 1, 137, 43114, 11155111, 80002, 43113.
-- **quantity**: Must be a positive integer.
-- **prefecture**: Must be a valid Japanese prefecture name (e.g., "東京都", "大阪府").
-- **signature**: Must be a hex string starting with `0x` (132 characters = 0x + 130 hex chars).
+`requires_shipping=false` の商品なら `HTTP/1.1 402` と `PAYMENT-REQUIRED:` ヘッダが
+返れば OK。`requires_shipping=true` の商品では `400 shipping_required` が返ります。
