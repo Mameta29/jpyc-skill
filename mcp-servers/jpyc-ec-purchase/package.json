@@ -1,0 +1,40 @@
+{
+  "name": "@jpyc-skill/ec-purchase-mcp",
+  "version": "0.1.0",
+  "description": "MCP server that lets any LLM agent search and purchase products on JPYC EC Platform via x402.",
+  "license": "MIT",
+  "author": "Mameta29",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/Mameta29/jpyc-skill.git",
+    "directory": "mcp-servers/jpyc-ec-purchase"
+  },
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "bin": {
+    "jpyc-ec-purchase-mcp": "./dist/bin.js"
+  },
+  "files": ["dist", "README.md", "LICENSE"],
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "dev": "tsc -p tsconfig.json --watch",
+    "clean": "rm -rf dist",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "test": "vitest run",
+    "start": "node dist/bin.js"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.0.0",
+    "viem": "^2.21.0",
+    "zod": "^3.23.0"
+  },
+  "devDependencies": {
+    "@types/node": "^22.10.0",
+    "typescript": "^5.7.0",
+    "vitest": "^2.1.0"
+  },
+  "engines": {
+    "node": ">=20.10.0"
+  }
+}
