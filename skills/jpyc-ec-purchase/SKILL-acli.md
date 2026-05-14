@@ -87,10 +87,29 @@ Content-Type: application/json
 `PAYMENT-REQUIRED` ヘッダを取り出してデコード:
 
 ```bash
-# レスポンスヘッダから抽出
-PAYMENT_REQUIRED_B64=$(curl -isS ... | awk -F': ' '/^PAYMENT-REQUIRED:/{print $2}' | tr -d '\r')
-echo "$PAYMENT_REQUIRED_B64" | base64 -d | jq .
+# レスポンスヘッダから抽出 (ヘッダ名は HTTP/2 で小文字化されるので case-insensitive で grep)
+PAYMENT_REQUIRED_B64=$(curl -isS ... | awk -F': ' 'tolower($1)=="payment-required"{print $2}' | tr -d '\r')
+
+# base64url → base64 に正規化してからデコード (BSD/macOS の `base64 -d` は
+# base64url を直接サポートしないので必須)
+echo "$PAYMENT_REQUIRED_B64" \
+  | tr '_-' '/+' \
+  | awk '{ pad = (4 - length($0) % 4) % 4; printf "%s%s", $0, substr("====", 1, pad) }' \
+  | base64 -d | jq .
 ```
+
+> **macOS / Linux 共通の堅牢な代替**: シェルの base64 は環境差が激しいため、
+> Node が手元にあるなら次の方が確実です。
+>
+> ```bash
+> echo "$PAYMENT_REQUIRED_B64" | node -e 'process.stdout.write(Buffer.from(require("fs").readFileSync(0,"utf8").trim(),"base64url").toString())' | jq .
+> ```
+>
+> Python なら:
+>
+> ```bash
+> echo "$PAYMENT_REQUIRED_B64" | python3 -c 'import sys,base64; sys.stdout.write(base64.urlsafe_b64decode(sys.stdin.read().strip()+"===").decode())' | jq .
+> ```
 
 デコード後の例:
 
@@ -195,7 +214,7 @@ const payload = {
 console.log(Buffer.from(JSON.stringify(payload)).toString("base64url"))
 EOF
 
-ACCEPTS_JSON=$(echo "$PAYMENT_REQUIRED_B64" | base64 -d | jq -c '.accepts[0]')
+ACCEPTS_JSON=$(echo "$PAYMENT_REQUIRED_B64" | node -e 'process.stdout.write(Buffer.from(require("fs").readFileSync(0,"utf8").trim(),"base64url").toString())' | jq -c '.accepts[0]')
 PAYMENT_SIGNATURE=$(BUYER_PRIVATE_KEY=0x... node /tmp/sign-x402.mjs "$ACCEPTS_JSON")
 ```
 
@@ -326,5 +345,9 @@ curl -isS -X POST \
   | head -20
 ```
 
-`requires_shipping=false` の商品なら `HTTP/1.1 402` と `PAYMENT-REQUIRED:` ヘッダが
-返れば OK。`requires_shipping=true` の商品では `400 shipping_required` が返ります。
+`requires_shipping=false` の商品なら `HTTP/2 402` と `payment-required:` ヘッダが
+返れば OK。`requires_shipping=true` の商品では `400 shipping_required` が返ります
+(これは「住所欠落」のシグナルで、再度 shipping ブロック付きで POST すれば 402 が返ります)。
+
+> **HTTP/2 ヘッダ名は小文字**で来る点に注意: `awk -F': ' '/^PAYMENT-REQUIRED:/...'`
+> ではマッチしません。上の例のように `tolower($1)=="payment-required"` を使うこと。

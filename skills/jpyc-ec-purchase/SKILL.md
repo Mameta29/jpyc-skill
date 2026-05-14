@@ -75,6 +75,8 @@ GET https://ec.jpyc-service.com/api/v1/products/{productId}
       "price_jpyc": "1500.000000000000000000",
       "stock": 42,
       "image_urls": ["https://..."],
+      "category": "お茶",
+      "tags": ["organic", "limited"],
       "requires_shipping": true,
       "grants_free_shipping": false,
       "variants": {
@@ -104,6 +106,9 @@ GET https://ec.jpyc-service.com/api/v1/products/{productId}
 | `requires_shipping === true` | 配送先住所が必須 | ユーザーに **氏名・郵便番号・都道府県・市区町村以降の住所・電話番号** を聞く (email は任意) |
 | `variants !== null` | バリエーション選択が必須 | ユーザーに **どの組み合わせ** を選ぶか聞く (例: `{ "サイズ": "M", "色": "白" }`) |
 | `available_chains` | このチェーン以外は払えない | ユーザーに preference があれば pass、なければサーバが先頭を使う |
+
+> **ヒント**: `image_urls` は **空配列もありえる**。サムネ表示で `image_urls[0]`
+> を使う場合は必ず存在チェックすること。
 
 エラー:
 
@@ -170,7 +175,11 @@ Content-Type: application/json
 {
   "x402Version": 2,
   "error": "PAYMENT-SIGNATURE header is required",
-  "resource": { "url": "...", "description": "商品名 × 1", "mimeType": "application/json" },
+  "resource": {
+    "url": "https://ec.jpyc-service.com/api/v1/products/{productId}/checkout",
+    "description": "商品名 × 1",
+    "mimeType": "application/json"
+  },
   "accepts": [
     {
       "scheme": "exact",
@@ -187,9 +196,19 @@ Content-Type: application/json
         "symbol": "JPYC"
       }
     }
-  ]
+  ],
+  "extensions": {
+    "x402.jpyc-ec.reservation_id": "res_a1b2c3d4..."
+  }
 }
 ```
+
+> **重要 (デコード方法)**: ヘッダは `base64url` (RFC 4648 §5、`-` `_` を使う変種)
+> でエンコードされています。Node なら `Buffer.from(header, "base64url")` で
+> デコード可。**シェルの `base64 -d` は環境差** (macOS の BSD 版は base64url を
+> サポートせず壊れます) があるので、シェル経由でデコードしたい場合は
+> `tr '_-' '/+'` してパディングを補ってから `base64 -d` するか、Node/Python の
+> `base64.urlsafe_b64decode` を使ってください。`SKILL-acli.md` に詳細あり。
 
 **ユーザーに見せて確認** すべき情報:
 
@@ -305,7 +324,7 @@ Content-Type: application/json
   "ok": true,
   "data": {
     "order_id": "uuid",
-    "order_number": "ORD-2026-...",
+    "order_number": "ORD-20260514-GOSFBI",
     "tx_hash": "0x<64 hex>",
     "network": "eip155:137",
     "payer": "0x<agent wallet>",
@@ -315,7 +334,8 @@ Content-Type: application/json
 ```
 
 注文は `order_status=3` (collected = 決済完了) で確定済み。on-chain transfer も完了
-しているので追加の署名や確認は不要です。
+しているので追加の署名や確認は不要です。`tx_hash` は対応するブロックエクスプローラ
+(Polygonscan / Etherscan / Snowtrace 等) でそのまま検索できます。
 
 エラー (status / code):
 
@@ -379,7 +399,19 @@ Content-Type: application/json
 }
 ```
 
-レスポンス: `{ ok: true, data: { sufficient: boolean, balance: "...", required: "1500" } }`
+レスポンス:
+```json
+{
+  "ok": true,
+  "data": {
+    "address": "0x<agent>",
+    "sufficient": true,
+    "balance": "1234.567",
+    "required": "1500",
+    "chain_id": 137
+  }
+}
+```
 
 実用上は **x402 step 2 の中で facilitator が残高を確認する** ため、事前 check は
 省略可能。step 3 で `insufficient_funds` が返れば残高不足と分かります。
@@ -428,6 +460,9 @@ async function purchaseProduct(productId: string, quantity = 1) {
     throw new Error(`expected 402, got ${challengeRes.status}: ${await challengeRes.text()}`)
   }
   const requiredHeader = challengeRes.headers.get("PAYMENT-REQUIRED")!
+  // Node の Buffer は "base64url" を直接サポート (RFC 4648 §5)。"base64" を
+  // 指定すると `-` `_` の置換が無く JSON が壊れることがあるので必ず "base64url"
+  // を使うこと。
   const required = JSON.parse(Buffer.from(requiredHeader, "base64url").toString())
   const accepts = required.accepts[0]
   const { reservation_id } = (await challengeRes.json()).data
@@ -511,7 +546,12 @@ async function purchaseProduct(productId: string, quantity = 1) {
   あるので、エージェントがユーザー確認しても余裕がある
 - **EIP-3009 nonce**: クライアント側で 32-byte ランダム生成。サーバ側生成は不要
 - **Stock**: step 2 で仮押さえ → step 3 成功で確定。途中で失敗すると 5 分後に自動解放
-- **Discount / NFT**: x402 経路では現在対象外 (将来対応)。NFT 割引が必要な購入は
-  既存レガシー経路 (`POST /api/v1/orders`) を使う
+- **Discount / NFT**: x402 経路では現在対象外 (将来対応予定)。NFT 割引・クーポン等を
+  使った購入は既存レガシー経路 (`POST /api/v1/orders`) を使う
 - **多商品カート**: x402 経路は 1 リクエスト = 1 商品。複数商品をまとめて買いたい場合は
   各商品を順に `purchase_product` する
+- **送料**: `requires_shipping=true` の商品は **送料込みの amount** が `accepts[0].amount`
+  に入って返る。エージェント側で別途送料計算は不要 (PaymentRequired を信頼すれば OK)
+- **エラーコード `errorReason`**: x402 v2 spec で定義された code をそのまま返す
+  (`insufficient_funds`, `invalid_exact_evm_payload_signature` 等)。詳細は
+  [coinbase/x402 仕様 §9](https://github.com/coinbase/x402/blob/main/specs/x402-specification-v2.md) 参照
