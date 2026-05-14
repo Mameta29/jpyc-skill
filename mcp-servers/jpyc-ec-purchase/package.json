@@ -1,28 +1,52 @@
 {
   "name": "@jpyc-skill/ec-purchase-mcp",
   "version": "0.1.0",
-  "description": "MCP server that lets any LLM agent search and purchase products on JPYC EC Platform via x402.",
+  "description": "MCP server that lets any LLM agent (Claude Desktop / Cursor / OpenAI Agents SDK) buy products on JPYC EC Platform via x402 — gasless EIP-3009 payments over HTTP.",
+  "keywords": [
+    "mcp",
+    "model-context-protocol",
+    "x402",
+    "jpyc",
+    "stablecoin",
+    "ai-agent",
+    "ec",
+    "ecommerce",
+    "eip-3009",
+    "gasless",
+    "claude",
+    "cursor"
+  ],
   "license": "MIT",
   "author": "Mameta29",
+  "homepage": "https://github.com/Mameta29/jpyc-skill/tree/main/mcp-servers/jpyc-ec-purchase",
   "repository": {
     "type": "git",
-    "url": "https://github.com/Mameta29/jpyc-skill.git",
+    "url": "git+https://github.com/Mameta29/jpyc-skill.git",
     "directory": "mcp-servers/jpyc-ec-purchase"
+  },
+  "bugs": {
+    "url": "https://github.com/Mameta29/jpyc-skill/issues"
   },
   "type": "module",
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",
   "bin": {
-    "jpyc-ec-purchase-mcp": "./dist/bin.js"
+    "jpyc-ec-purchase-mcp": "dist/bin.js"
   },
-  "files": ["dist", "README.md", "LICENSE"],
+  "files": [
+    "dist",
+    "README.md",
+    "LICENSE"
+  ],
   "scripts": {
     "build": "tsc -p tsconfig.json",
     "dev": "tsc -p tsconfig.json --watch",
     "clean": "rm -rf dist",
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "test": "vitest run",
-    "start": "node dist/bin.js"
+    "start": "node dist/bin.js",
+    "prepublishOnly": "npm run clean && npm run build && npm run test",
+    "version": "echo 'use changesets at repo root'"
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.0.0",
@@ -36,5 +60,10 @@
   },
   "engines": {
     "node": ">=20.10.0"
+  },
+  "publishConfig": {
+    "access": "public",
+    "registry": "https://registry.npmjs.org/",
+    "provenance": true
   }
 }

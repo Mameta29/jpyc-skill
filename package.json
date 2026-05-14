@@ -1,0 +1,22 @@
+{
+  "name": "jpyc-skill-monorepo",
+  "version": "0.0.0",
+  "private": true,
+  "description": "AI agent skill + MCP server for buying on JPYC EC Platform",
+  "license": "MIT",
+  "author": "Mameta29",
+  "scripts": {
+    "build": "npm --prefix mcp-servers/jpyc-ec-purchase run build",
+    "test": "npm --prefix mcp-servers/jpyc-ec-purchase test",
+    "typecheck": "npm --prefix mcp-servers/jpyc-ec-purchase run typecheck",
+    "changeset": "changeset",
+    "version-packages": "changeset version",
+    "release": "npm --prefix mcp-servers/jpyc-ec-purchase run build && changeset publish"
+  },
+  "devDependencies": {
+    "@changesets/cli": "^2.27.10"
+  },
+  "engines": {
+    "node": ">=20.10.0"
+  }
+}

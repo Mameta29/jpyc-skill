@@ -11,3 +11,7 @@ build/
 # part of this repo's published surface (the repo's focus is the EC
 # purchase skill + MCP server).
 skills/jpyc/
+
+# Changesets: keep README + config in version control; the actual
+# pending *.md changesets land in PRs and ship with the release PR.
+# (The first release's initial-release.md is committed explicitly.)
