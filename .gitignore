@@ -6,3 +6,8 @@ build/
 .env
 .env.local
 *.tsbuildinfo
+
+# JPYC contract reference skill — kept locally for personal use but not
+# part of this repo's published surface (the repo's focus is the EC
+# purchase skill + MCP server).
+skills/jpyc/
