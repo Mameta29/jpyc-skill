@@ -83,7 +83,7 @@ Use the same stdio launcher; both tools accept arbitrary MCP servers.
 
 - Each `purchase_product` call signs a fresh EIP-3009 authorization; nothing
   is reused. Replay is impossible at the contract level.
-- The platform's facilitator (`https://facilitator.jpyc-x402.com`) pays gas
+- The platform's facilitator (`https://facilitator.jpyc-service.com`) pays gas
   for settlement. If you self-host the EC platform, configure your own
   facilitator URL via that platform's `FACILITATOR_URL` env var.
 - Supported chains follow JPYC EC Platform's chain registry: Ethereum,
