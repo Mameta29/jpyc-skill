@@ -35,8 +35,10 @@ AI エージェントが **JPYC EC Platform** (https://ec.jpyc-service.com) の�
 | Production | `https://ec.jpyc-service.com` | 1 (Ethereum), 137 (Polygon), 43114 (Avalanche) |
 | Staging | `https://stg-ec.jpyc-service.com` | 11155111 (Sepolia), 80002 (Amoy), 43113 (Fuji), 1001 (Kairos), 5042002 (Arc) |
 
-メインネット ID をステージングに、テストネット ID を本番に送ると `INVALID_CHAIN`
-エラーになります。
+メインネット ID をステージングに、テストネット ID を本番に送ると、その環境では
+そのチェーンが使えないため弾かれます。`/api/v1/checkout` では `400 invalid_body`
+(`preferred_chain_id is not available in this environment`)、`/api/v1/balance/check`
+では `INVALID_CHAIN` が返ります。
 
 ---
 
@@ -190,6 +192,12 @@ Content-Type: application/json
 
 `summary` を使って、署名前にユーザーへ正しい合計金額を提示してください。
 
+> **注意**: `summary` の各値は文字列で、小数桁数は項目により不揃いです
+> (`total_jpyc` は `"3500"`、`shipping_jpyc` は `"500.000000000000000000"` の
+> ように 18 桁付きで返ることがある)。表示前に `parseFloat` / `Number` で正規化
+> してください。実際に署名する金額は `summary` ではなく
+> `PAYMENT-REQUIRED.accepts[0].amount` (atomic units) を使うこと。
+
 `PAYMENT-REQUIRED` ヘッダを base64url デコードすると以下の x402 v2 `PaymentRequired`
 構造体になります:
 
@@ -240,11 +248,14 @@ Content-Type: application/json
 
 エラー:
 
-- `400 invalid_body` — リクエストボディが zod schema に合わない
-- `400 invalid_quantity` — `quantity <= 0`
+- `400 invalid_body` — リクエストボディが zod schema に合わない。**`quantity <= 0`、
+  `customer_email` 欠落/不正、`preferred_chain_id` がその環境で使えない、等は
+  すべてこの `invalid_body` で返る** (専用コードはない)。`message` に zod の
+  詳細 (`path` 付き) が JSON 文字列で入るので、どのフィールドが原因かはそれを見る
 - `400 shipping_required` — `requires_shipping=true` なのに `shipping` 欠落 → ユーザーに住所聞く
 - `400 variant_required` / `400 invalid_variant` — variants 必須なのに `variant_selections` 欠落/不正
-- `400 no_chains_configured` — 商品の `available_chains` が空
+- `400 shop_mismatch` — `items` に別ショップの商品が混在
+- `400 no_common_chain` — `items` の `available_chains` に共通チェーンがない
 - `400 x402_disabled` — ショップが x402 をオプトアウト → このショップは購入不可
 - `404 product_not_found`
 - `404 shop_not_found`
@@ -376,8 +387,9 @@ Content-Type: application/json
 | 409 | `insufficient_stock` | 在庫切れ | 別の商品提案 |
 | 409 | `shop_wallet_changed` | ショップがウォレット変更 | step 2 からやり直し |
 | 429 | `rate_limited` | 30 req/60s/IP | 数秒待ってリトライ |
-| 502 | `settlement_failed` | facilitator が settle 失敗 | リトライ (relayer 残高不足など一時的なことが多い) |
-| 502 | `facilitator_insufficient_native_balance` | facilitator の gas 切れ | リトライ (運営に通知される) |
+| 502 | `facilitator_insufficient_native_balance` | facilitator (relayer) の gas 切れ | リトライ (運営に自動通知される。復旧まで数分かかることがある) |
+| 502 | `settlement_failed` | facilitator が settle 失敗 (上記以外) | リトライ。繰り返すなら運営に問い合わせ |
+| 502 | `unexpected_settle_error` | facilitator が分類不能な例外を捕捉 | リトライ。繰り返すなら運営に問い合わせ |
 
 ---
 

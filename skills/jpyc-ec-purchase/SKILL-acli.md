@@ -157,9 +157,12 @@ echo "$PAYMENT_REQUIRED_B64" \
 
 エラーコード:
 
-- `400 invalid_body`
+- `400 invalid_body` ← zod schema 違反全般。`quantity <= 0`、`customer_email`
+  欠落/不正、`preferred_chain_id` がその環境で未対応、等はすべてこれ (専用コード
+  なし)。`message` に zod の詳細が JSON 文字列で入る
 - `400 shipping_required` ← 住所聞いてリトライ
 - `400 shop_mismatch` ← items に別ショップの商品が混在
+- `400 no_common_chain` ← items の `available_chains` に共通チェーンがない
 - `400 variant_required` / `400 invalid_variant`
 - `400 x402_disabled` ← このショップは x402 未対応
 - `404 product_not_found` / `404 shop_not_found`
@@ -283,7 +286,8 @@ PAYMENT-RESPONSE: eyJzdWNjZXNzIjp0cnVlLC...
 | 404 | `product_disappeared` | 商品削除 |
 | 409 | `insufficient_stock` / `shop_wallet_changed` | step 2 からやり直し |
 | 429 | `rate_limited` | 数秒待ち |
-| 502 | `settlement_failed` / `facilitator_insufficient_native_balance` | リトライ |
+| 502 | `facilitator_insufficient_native_balance` | facilitator の gas 切れ。リトライ (運営に自動通知。復旧まで数分かかることも) |
+| 502 | `settlement_failed` / `unexpected_settle_error` | facilitator が settle 失敗。リトライ。繰り返すなら運営に問い合わせ |
 
 ---
 
@@ -348,7 +352,9 @@ curl -sS -X POST \
 | Production | `https://ec.jpyc-service.com` | 1 / 137 / 43114 |
 | Staging | `https://stg-ec.jpyc-service.com` | 11155111 / 80002 / 43113 / 1001 / 5042002 |
 
-メインネット ID をステージングに送ると `INVALID_CHAIN` エラー。
+メインネット ID をステージングに送ると、その環境ではそのチェーンが使えないため
+弾かれます。`/api/v1/checkout` では `400 invalid_body`、`/api/v1/balance/check`
+では `INVALID_CHAIN` が返ります。
 
 ---
 
