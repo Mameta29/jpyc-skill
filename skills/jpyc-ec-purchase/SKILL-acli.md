@@ -188,7 +188,9 @@ echo "$PAYMENT_REQUIRED_B64" \
 - `400 no_common_chain` ← items の `available_chains` に共通チェーンがない
 - `400 variant_required` / `400 invalid_variant`
 - `400 invalid_checkout_option` ← required:true の checkout_options 欠落/不正値
-  → ショップの `checkout_options` を見て必須オプションを聞き、再送
+  → ショップの `checkout_options` を見て必須オプションを聞き、再送。
+  `message` はユーザー向け日本語 (例「到着時間を選択してください」) で
+  オプションの `name` を含む (`id` ではない)
 - `400 x402_disabled` ← このショップは x402 未対応 (shop.x402_enabled=false)
 - `404 product_not_found` / `404 shop_not_found`
 - `409 insufficient_stock`

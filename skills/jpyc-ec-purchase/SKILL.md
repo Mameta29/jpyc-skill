@@ -318,7 +318,11 @@ Content-Type: application/json
 - `400 variant_required` / `400 invalid_variant` — variants 必須なのに `variant_selections` 欠落/不正
 - `400 invalid_checkout_option` — `required:true` の checkout_options を送っていない、
   または値が定義 (select の選択肢 / text の max_length 等) に合わない → ショップの
-  `checkout_options` を見て必須オプションをユーザーに聞き、再送する
+  `checkout_options` を見て必須オプションをユーザーに聞き、再送する。
+  `message` は「到着時間を選択してください」のような **ユーザー向けの日本語**
+  で、オプションの `name` (表示名、`id` ではない) を含む。そのままユーザーに
+  見せてよいが、どの定義が原因かをコードで特定したいときは `message` の文字列
+  一致ではなく `checkout_options` の `name` と突き合わせること
 - `400 shop_mismatch` — `items` に別ショップの商品が混在
 - `400 no_common_chain` — `items` の `available_chains` に共通チェーンがない
 - `400 x402_disabled` — ショップが x402 をオプトアウト → このショップは購入不可
