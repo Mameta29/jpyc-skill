@@ -41,9 +41,32 @@ curl -sS https://ec.jpyc-service.com/api/v1/products/{PRODUCT_ID} | jq .
 重要フィールド:
 
 - `data.product.requires_shipping` (bool) — true なら shipping ブロック必須
-- `data.product.variants` (object | null) — 非 null ならバリエーション選択必須
+- `data.product.variants` (object | null) — 非 null なら `variant_selections` 必須
 - `data.shop.available_chains` (number[]) — 払えるチェーン ID
 - `data.shop.default_chain_id` — チェーン指定省略時のデフォルト
+- `data.shop.x402_enabled` (bool) — **false ならこのショップは x402 購入不可**。
+  購入を中止し、ユーザーにその旨を伝える (`POST /checkout` しても
+  `400 x402_disabled` で弾かれる)
+- `data.shop.checkout_options` (array) — ショップ定義の購入オプション (のし /
+  到着時間 / メッセージカード等)。各要素の **`required:true` はそのオプションが
+  必須**。値を送らないと `400 invalid_checkout_option`。`id` をキーに
+  `checkout_options` で値を渡す (下記参照)
+- `data.shop.is_demo` (bool) — true なら**デモショップ**。x402 フローを JPYC
+  残高ゼロで体験できる。settle で on-chain 送金は行われず、`tx_hash` は全ゼロの
+  ハッシュ (`0x0000...0000`) のダミー値。リクエスト/署名手順は通常ショップと同一
+
+`checkout_options` の各要素:
+
+```json
+{ "id": "noshi", "name": "のし", "required": true, "type": "select",
+  "values": [ { "label": "あり", "surcharge_jpyc": "100" },
+              { "label": "なし", "surcharge_jpyc": "0" } ] }
+```
+
+`required:true` のオプションがあるショップでは、Step 2 の body に
+`"checkout_options": { "noshi": "あり" }` のように `id` をキーにした値を必ず
+含めること (省略すると `400 invalid_checkout_option`)。`type` は `select`
+(`values` から選ぶ) / `text` (自由入力) / `checkbox` (true/false)。
 
 エラー:
 
@@ -164,7 +187,9 @@ echo "$PAYMENT_REQUIRED_B64" \
 - `400 shop_mismatch` ← items に別ショップの商品が混在
 - `400 no_common_chain` ← items の `available_chains` に共通チェーンがない
 - `400 variant_required` / `400 invalid_variant`
-- `400 x402_disabled` ← このショップは x402 未対応
+- `400 invalid_checkout_option` ← required:true の checkout_options 欠落/不正値
+  → ショップの `checkout_options` を見て必須オプションを聞き、再送
+- `400 x402_disabled` ← このショップは x402 未対応 (shop.x402_enabled=false)
 - `404 product_not_found` / `404 shop_not_found`
 - `409 insufficient_stock`
 - `429 rate_limited` (30 req/60s/IP)
@@ -268,10 +293,15 @@ PAYMENT-RESPONSE: eyJzdWNjZXNzIjp0cnVlLC...
     "tx_hash": "0x<64hex>",
     "network": "eip155:137",
     "payer": "0x<agent>",
-    "amount_atomic": "1500000000000000000000"
+    "amount_atomic": "1500000000000000000000",
+    "is_demo": false
   }
 }
 ```
+
+> `data.is_demo` が `true` ならデモショップの注文。on-chain 送金は行われず
+> `tx_hash` は全ゼロのハッシュ (`0x0000...0000`) のダミー値 (エクスプローラでは引けない)。
+> ユーザーには「デモ決済で実際の JPYC 送金はない」と明示すること。
 
 エラー (status / code):
 

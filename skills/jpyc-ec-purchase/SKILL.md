@@ -100,19 +100,81 @@ GET https://ec.jpyc-service.com/api/v1/products/{productId}
       "name": "ショップ名",
       "wallet_address": "0x...",
       "available_chains": [137, 43114],
-      "default_chain_id": 137
+      "default_chain_id": 137,
+      "is_demo": false,
+      "x402_enabled": true,
+      "checkout_options": [
+        {
+          "id": "noshi",
+          "name": "のし",
+          "required": true,
+          "type": "select",
+          "values": [
+            { "label": "あり", "surcharge_jpyc": "100" },
+            { "label": "なし", "surcharge_jpyc": "0" }
+          ]
+        },
+        {
+          "id": "message",
+          "name": "メッセージカード",
+          "required": false,
+          "type": "text",
+          "max_length": 100
+        }
+      ]
     }
   }
 }
 ```
 
-**判定**:
+**判定** — Step 2 に進む前に、商品とショップの **必須条件をすべて満たす情報を
+集めてあるか** を必ずこの表で確認してください。`checkout_options` は商品ではなく
+**ショップ単位** の設定です。
 
-| フィールド | true / 非 null のとき | エージェントの行動 |
-|-----------|---------------------|-------------------|
-| `requires_shipping === true` | 配送先住所が必須 | ユーザーに **氏名・郵便番号・都道府県・市区町村以降の住所・電話番号** を聞く (email は任意) |
-| `variants !== null` | バリエーション選択が必須 | ユーザーに **どの組み合わせ** を選ぶか聞く (例: `{ "サイズ": "M", "色": "白" }`) |
-| `available_chains` | このチェーン以外は払えない | ユーザーに preference があれば pass、なければサーバが先頭を使う |
+| フィールド | 条件 | エージェントの行動 |
+|-----------|------|-------------------|
+| `product.requires_shipping === true` | 配送先住所が**必須** | ユーザーに **氏名・郵便番号・都道府県・市区町村以降の住所・電話番号** を聞き、`shipping` ブロックに入れる (email は別途必須) |
+| `product.variants !== null` | バリエーション選択が**必須** | ユーザーに **どの組み合わせ** を選ぶか聞き、`items[].variant_selections` に入れる (例: `{ "サイズ": "M", "色": "白" }`) |
+| `shop.checkout_options[]` の各要素で `required === true` | **そのオプションの値が必須** | ユーザーに値を聞き、`checkout_options` に `{ option_id: 値 }` で入れる。`required:false` のものは省略可。詳細は下の「checkout_options」節 |
+| `shop.x402_enabled === false` | このショップは **x402 購入不可** | 購入を中止し、ユーザーに「このショップは AI エージェント経由の購入に対応していません」と伝える。`POST /checkout` しても `400 x402_disabled` で弾かれる |
+| `shop.available_chains` | このチェーン以外は払えない | ユーザーに preference があれば pass、なければサーバが先頭を使う |
+| `shop.is_demo === true` | **デモショップ** | JPYC 残高ゼロでも完走できる。実際の送金は起きず `tx_hash` はダミー。x402 フローの動作確認に使える (後述) |
+
+#### checkout_options (ショップ定義の購入オプション)
+
+`shop.checkout_options` は、のし・到着時間指定・メッセージカードなど **ショップが
+独自に定義した購入時オプション** の配列です。各要素の構造:
+
+- `id` — オプション識別子。`POST /checkout` の `checkout_options` ではこの `id`
+  をキーに値を渡す
+- `name` — ユーザー向け表示名 (例: 「のし」)
+- `required` — **`true` ならそのオプションの値は必須**。値を送らずに `POST
+  /checkout` すると `400 invalid_checkout_option` になる。`false` は省略可
+- `type` — `"select"`（`values` から 1 つ選ぶ）/ `"text"`（自由入力、`max_length`
+  まで）/ `"checkbox"`（true/false）
+- `values` (select のみ) — 選択肢。各 `label` と追加料金 `surcharge_jpyc`
+- `surcharge_jpyc` — 選んだ値に応じて合計金額に加算される (Step 2 の 402 で
+  確定するので、エージェント側で足し算する必要はない)
+
+`POST /checkout` に渡す形式 (Step 2 参照):
+
+```json
+"checkout_options": { "noshi": "あり", "message": "お誕生日おめでとう" }
+```
+
+`required:true` のオプションが 1 つでもあるショップでは、`checkout_options` を
+省略すると Step 2 で弾かれます。**ショップに `checkout_options` がある場合は、
+`required` を確認して必須のものを必ずユーザーに尋ねてください。**
+
+> **デモショップ (`shop.is_demo === true`) について**: x402 購入フロー
+> (402 → 署名 → 注文確定) を JPYC を持たずに体験するためのショップです。
+> リクエスト/レスポンスの形・署名手順は通常ショップと完全に同一ですが、
+> settle で **on-chain 送金が行われません** (facilitator を経由しない)。
+> - JPYC 残高ゼロのウォレットでも settle が成功する
+> - `tx_hash` は全ゼロのハッシュ (`0x0000...0000`) のダミー値。ブロック
+>   エクスプローラでは引けないので、エクスプローラ URL を提示しないこと
+> - settle 成功レスポンスの `data.is_demo` が `true` で返る
+> - 署名 (EIP-712) の検証はサーバ側で行われるため、不正な署名は弾かれる
 
 > **ヒント**: `image_urls` は **空配列もありえる**。サムネ表示で `image_urls[0]`
 > を使う場合は必ず存在チェックすること。
@@ -254,6 +316,9 @@ Content-Type: application/json
   詳細 (`path` 付き) が JSON 文字列で入るので、どのフィールドが原因かはそれを見る
 - `400 shipping_required` — `requires_shipping=true` なのに `shipping` 欠落 → ユーザーに住所聞く
 - `400 variant_required` / `400 invalid_variant` — variants 必須なのに `variant_selections` 欠落/不正
+- `400 invalid_checkout_option` — `required:true` の checkout_options を送っていない、
+  または値が定義 (select の選択肢 / text の max_length 等) に合わない → ショップの
+  `checkout_options` を見て必須オプションをユーザーに聞き、再送する
 - `400 shop_mismatch` — `items` に別ショップの商品が混在
 - `400 no_common_chain` — `items` の `available_chains` に共通チェーンがない
 - `400 x402_disabled` — ショップが x402 をオプトアウト → このショップは購入不可
@@ -364,7 +429,8 @@ Content-Type: application/json
     "tx_hash": "0x<64 hex>",
     "network": "eip155:137",
     "payer": "0x<agent wallet>",
-    "amount_atomic": "1500000000000000000000"
+    "amount_atomic": "1500000000000000000000",
+    "is_demo": false
   }
 }
 ```
@@ -372,6 +438,11 @@ Content-Type: application/json
 注文は `order_status=3` (collected = 決済完了) で確定済み。on-chain transfer も完了
 しているので追加の署名や確認は不要です。`tx_hash` は対応するブロックエクスプローラ
 (Polygonscan / Etherscan / Snowtrace 等) でそのまま検索できます。
+
+> **`data.is_demo`**: `true` ならデモショップの注文です。on-chain 送金は
+> 行われておらず、`tx_hash` は全ゼロのハッシュ (`0x0000...0000`) のダミー値で
+> エクスプローラでは引けません。`is_demo: true` のときはユーザーに「これは
+> デモ決済で、実際の JPYC 送金は行われていません」と明示してください。
 
 エラー (status / code):
 
