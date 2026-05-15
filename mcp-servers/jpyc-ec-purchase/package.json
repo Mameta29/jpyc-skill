@@ -1,6 +1,6 @@
 {
   "name": "@jpyc-skill/ec-purchase-mcp",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "MCP server that lets any LLM agent (Claude Desktop / Cursor / OpenAI Agents SDK) buy products on JPYC EC Platform via x402 — gasless EIP-3009 payments over HTTP.",
   "keywords": [
     "mcp",

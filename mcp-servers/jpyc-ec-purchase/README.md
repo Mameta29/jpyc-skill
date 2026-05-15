@@ -26,16 +26,18 @@ provides. No tool advertises functionality the API does not.
 
 | Tool | EC API endpoint |
 | ---- | --------------- |
-| `purchase_product({ product_id, quantity, ... })` | `POST /api/v1/products/:id/checkout` (called twice — challenge then settle) |
+| `purchase_cart({ shop_id, items[], customer_email, ... })` | `POST /api/v1/checkout` (called twice — challenge then settle) |
+| `purchase_product({ shop_id, product_id, quantity, customer_email, ... })` | thin shim over `purchase_cart` for a single item |
 
-`purchase_product` accepts an optional `max_amount_atomic` budget cap. The
-tool refuses to sign if the 402 challenge requires more than this — a
-strongly recommended guard against agent hijacking.
+Both tools accept an optional `max_amount_atomic` budget cap. The tool
+refuses to sign if the 402 challenge requires more than this — a strongly
+recommended guard against agent hijacking.
 
-> **Before calling `purchase_product`**: always call `get_product` first.
-> Read `requires_shipping` and `variants` and collect the necessary inputs
-> from the user. Skipping this step causes the purchase to fail with
-> `400 shipping_required` or `400 invalid_variant`.
+> **Before calling either purchase tool**: call `get_product` on each item
+> first. Read `requires_shipping` and `variants` and collect the necessary
+> inputs from the user. All items must belong to the same `shop_id`, and
+> `customer_email` is required. Skipping these causes the purchase to fail
+> with `400 shipping_required` / `400 invalid_variant` / `400 shop_mismatch`.
 
 ## Install
 
@@ -81,8 +83,8 @@ Use the same stdio launcher; both tools accept arbitrary MCP servers.
 
 ## Notes
 
-- Each `purchase_product` call signs a fresh EIP-3009 authorization; nothing
-  is reused. Replay is impossible at the contract level.
+- Each `purchase_cart` / `purchase_product` call signs a fresh EIP-3009
+  authorization; nothing is reused. Replay is impossible at the contract level.
 - The platform's facilitator (`https://facilitator.jpyc-service.com`) pays gas
   for settlement. If you self-host the EC platform, configure your own
   facilitator URL via that platform's `FACILITATOR_URL` env var.

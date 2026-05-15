@@ -42,15 +42,20 @@ AI エージェントが **JPYC EC Platform** (https://ec.jpyc-service.com) の�
 
 ## Purchase Flow (x402)
 
-エージェントは以下の 3 ステップで完走します。
+注文は **`POST /api/v1/checkout`** に一本化されています。人間ユーザーの
+storefront も AI エージェントも同じエンドポイントを使います。エージェントは
+以下の 3 ステップで完走します。
 
 ```
-1. GET  /api/v1/products/{productId}         ← 商品情報 + 配送/オプション要件確認
-2. POST /api/v1/products/{productId}/checkout (no PAYMENT-SIGNATURE)
-                                              ← 402 challenge + reservation_id
-3. POST /api/v1/products/{productId}/checkout (with PAYMENT-SIGNATURE)
-                                              ← 200 + 注文成立 + tx_hash
+1. GET  /api/v1/products/{productId}   ← 各商品の配送/バリエーション要件確認
+2. POST /api/v1/checkout (no PAYMENT-SIGNATURE)
+                                       ← 402 challenge + reservation_id + 金額サマリ
+3. POST /api/v1/checkout (with PAYMENT-SIGNATURE, body は reservation_id のみ)
+                                       ← 200 + 注文成立 + tx_hash
 ```
+
+`/api/v1/checkout` は **カート単位** (複数商品 OK)。1 商品だけ買う場合も
+`items` 配列に 1 件入れるだけです。
 
 ### Step 1 — Product info & branching
 
@@ -118,25 +123,29 @@ GET https://ec.jpyc-service.com/api/v1/products/{productId}
 ### Step 2 — Request 402 challenge
 
 `PAYMENT-SIGNATURE` ヘッダ **なし** で POST。サーバは在庫を 5 分間仮押さえし、
-402 + `PAYMENT-REQUIRED` ヘッダを返します。
+402 + `PAYMENT-REQUIRED` ヘッダ + 金額サマリを返します。
 
 ```http
-POST https://ec.jpyc-service.com/api/v1/products/{productId}/checkout
+POST https://ec.jpyc-service.com/api/v1/checkout
 Content-Type: application/json
 
 {
-  "quantity": 1,
+  "shop_id": "uuid-of-shop",
   "preferred_chain_id": 137,
-  "variant_selections": { "サイズ": "M" },
+  "items": [
+    { "product_id": "uuid-1", "quantity": 1, "variant_selections": { "サイズ": "M" } },
+    { "product_id": "uuid-2", "quantity": 2 }
+  ],
+  "customer_email": "yamada@example.com",
   "shipping": {
     "name": "山田太郎",
-    "email": "yamada@example.com",
     "zip": "150-0001",
     "prefecture": "東京都",
     "address1": "渋谷区神宮前1-2-3",
     "address2": "サンプルマンション101",
     "tel": "090-1234-5678"
   },
+  "is_gift": false,
   "customer_note": "プレゼント用に包装してください"
 }
 ```
@@ -145,10 +154,14 @@ Content-Type: application/json
 
 | フィールド | 必須 | 説明 |
 |-----------|------|------|
-| `quantity` | ✅ | 正の整数 |
-| `preferred_chain_id` | 任意 | `product.shop.available_chains` のいずれか。省略時は `default_chain_id` |
-| `variant_selections` | `variants !== null` のとき必須 | `{ option_name: value }` |
-| `shipping` | `requires_shipping === true` のとき必須 | name / zip / prefecture / address1 / tel が必須サブフィールド |
+| `shop_id` | ✅ | 全 `items` が同一ショップに属している必要がある |
+| `items[]` | ✅ | `product_id` + `quantity` (+ `variant_selections`)。最低 1 件 |
+| `items[].variant_selections` | `variants !== null` の商品で必須 | `{ option_name: value }` |
+| `customer_email` | ✅ | 注文確認メールの宛先。x402 経路でも必須 |
+| `preferred_chain_id` | 任意 | 全 `items` の `available_chains` の積集合のいずれか |
+| `shipping` | いずれかの item が `requires_shipping` のとき必須 | name / zip / prefecture / address1 / tel |
+| `is_gift` / `gift_recipient` | 任意 | 贈り物のとき `is_gift: true` + `gift_recipient` |
+| `checkout_options` | 任意 | ショップ定義のオプション (のし等) の選択値 |
 | `customer_note` | 任意 | ショップへの伝言 (max 2000 文字) |
 
 レスポンス (HTTP 402):
@@ -163,10 +176,19 @@ Content-Type: application/json
   "error": { "code": "payment_required", "message": "PAYMENT-SIGNATURE header is required" },
   "data": {
     "reservation_id": "res_a1b2c3d4...",
-    "expires_at_unix_ms": 1731486100000
+    "expires_at_unix_ms": 1731486100000,
+    "summary": {
+      "subtotal_jpyc": "5000",
+      "discount_jpyc": "0",
+      "shipping_jpyc": "500",
+      "checkout_options_surcharge_jpyc": "0",
+      "total_jpyc": "5500"
+    }
   }
 }
 ```
+
+`summary` を使って、署名前にユーザーへ正しい合計金額を提示してください。
 
 `PAYMENT-REQUIRED` ヘッダを base64url デコードすると以下の x402 v2 `PaymentRequired`
 構造体になります:
@@ -176,7 +198,7 @@ Content-Type: application/json
   "x402Version": 2,
   "error": "PAYMENT-SIGNATURE header is required",
   "resource": {
-    "url": "https://ec.jpyc-service.com/api/v1/products/{productId}/checkout",
+    "url": "https://ec.jpyc-service.com/api/v1/checkout",
     "description": "商品名 × 1",
     "mimeType": "application/json"
   },
@@ -304,7 +326,7 @@ x402 v2 の `PaymentPayload` を組み立てます:
 #### 3c. Settle リクエスト
 
 ```http
-POST https://ec.jpyc-service.com/api/v1/products/{productId}/checkout
+POST https://ec.jpyc-service.com/api/v1/checkout
 Content-Type: application/json
 PAYMENT-SIGNATURE: eyJ4NDAyVmVyc2lvbiI6Mi...   (base64url JSON)
 
@@ -312,6 +334,9 @@ PAYMENT-SIGNATURE: eyJ4NDAyVmVyc2lvbiI6Mi...   (base64url JSON)
   "reservation_id": "res_a1b2c3d4..."
 }
 ```
+
+> 2 回目の body は `reservation_id` だけです。`items` 等は再送しません
+> (1 回目で reservation snapshot に固定済み)。
 
 **成功レスポンス** (HTTP 200):
 
@@ -379,10 +404,9 @@ GET https://ec.jpyc-service.com/api/v1/orders?customer_address=0x...
 
 `order_status` の意味:
 
-- `1` — 未署名 (`x402` 経路では発生しない。レガシー経路のみ)
-- `2` — 署名済み・回収待ち (`x402` 経路では発生しない)
-- `3` — **決済完了** (`x402` 経路は最初からこの状態)
-- `9` — 期限切れ (`x402` 経路では発生しない)
+- `3` — **決済完了** (`/api/v1/checkout` 経由の注文は最初からこの状態)
+- `9` — 期限切れ
+- `1` / `2` — 旧フロー (未署名 / 署名済み回収待ち) の名残。新規注文では発生しない
 
 ### Balance check (optional)
 
@@ -430,10 +454,10 @@ import { randomBytes } from "node:crypto"
 const BASE = "https://ec.jpyc-service.com"
 const account = privateKeyToAccount(process.env.BUYER_PRIVATE_KEY as `0x${string}`)
 
-async function purchaseProduct(productId: string, quantity = 1) {
+async function purchaseCart(shopId: string, productId: string, quantity = 1) {
   // Step 1: product info
   const productRes = await fetch(`${BASE}/api/v1/products/${productId}`)
-  const { data: { product, shop } } = await productRes.json()
+  const { data: { product } } = await productRes.json()
 
   // Step 1.5: collect shipping if required (replace with your agent's UX layer)
   let shipping: any = undefined
@@ -445,14 +469,14 @@ async function purchaseProduct(productId: string, quantity = 1) {
     variantSelections = await askUserForVariant(product.variants)  // your UX
   }
 
-  // Step 2: 402 challenge
-  const challengeRes = await fetch(`${BASE}/api/v1/products/${productId}/checkout`, {
+  // Step 2: 402 challenge (POST /api/v1/checkout — cart-level)
+  const challengeRes = await fetch(`${BASE}/api/v1/checkout`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({
-      quantity,
-      preferred_chain_id: shop.default_chain_id,
-      variant_selections: variantSelections,
+      shop_id: shopId,
+      items: [{ product_id: productId, quantity, variant_selections: variantSelections }],
+      customer_email: "buyer@example.com",  // required
       shipping,
     }),
   })
@@ -521,7 +545,7 @@ async function purchaseProduct(productId: string, quantity = 1) {
   const sigHeader = Buffer.from(JSON.stringify(payload)).toString("base64url")
 
   // Step 3c: settle
-  const settleRes = await fetch(`${BASE}/api/v1/products/${productId}/checkout`, {
+  const settleRes = await fetch(`${BASE}/api/v1/checkout`, {
     method: "POST",
     headers: {
       "Content-Type": "application/json",
@@ -546,10 +570,16 @@ async function purchaseProduct(productId: string, quantity = 1) {
   あるので、エージェントがユーザー確認しても余裕がある
 - **EIP-3009 nonce**: クライアント側で 32-byte ランダム生成。サーバ側生成は不要
 - **Stock**: step 2 で仮押さえ → step 3 成功で確定。途中で失敗すると 5 分後に自動解放
-- **Discount / NFT**: x402 経路では現在対象外 (将来対応予定)。NFT 割引・クーポン等を
-  使った購入は既存レガシー経路 (`POST /api/v1/orders`) を使う
-- **多商品カート**: x402 経路は 1 リクエスト = 1 商品。複数商品をまとめて買いたい場合は
-  各商品を順に `purchase_product` する
+- **多商品カート**: `POST /api/v1/checkout` は `items[]` で複数商品をまとめて
+  購入できる。1 商品でも複数でも同じエンドポイント・同じ 1 回の署名で完結する
+- **Discount / NFT 割引**: `/api/v1/checkout` は `discount` ブロックを受け付ける
+  が、対象 NFT の保有確認と割引額の算出は呼び出し側の責務。本スキルの purchase
+  ツールは現状 NFT 割引を自動適用しない
+- **贈り物 / のし等のオプション**: `is_gift` / `gift_recipient` / `checkout_options`
+  を `/api/v1/checkout` の body に渡せる
+- **旧 endpoint**: `POST /api/v1/products/:id/checkout` は `/api/v1/checkout`
+  へ転送する deprecated プロキシ (`Deprecation` / `Sunset` ヘッダ付き)。
+  新規実装は `/api/v1/checkout` を直接使うこと。`POST /api/v1/orders` 系は廃止済み
 - **送料**: `requires_shipping=true` の商品は **送料込みの amount** が `accepts[0].amount`
   に入って返る。エージェント側で別途送料計算は不要 (PaymentRequired を信頼すれば OK)
 - **エラーコード `errorReason`**: x402 v2 spec で定義された code をそのまま返す

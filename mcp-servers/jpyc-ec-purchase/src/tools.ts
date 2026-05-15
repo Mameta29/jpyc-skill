@@ -14,8 +14,10 @@
  *   get_categories()                   → GET /api/v1/categories
  *   get_order_status(customer_address?) → GET /api/v1/orders?customer_address=
  *
- * Purchase tool (signs + settles via x402):
- *   purchase_product({...})            → POST /api/v1/products/:id/checkout (twice)
+ * Purchase tools (sign + settle via x402):
+ *   purchase_cart({...})               → POST /api/v1/checkout (twice)
+ *   purchase_product({...})            → thin shim over purchase_cart for a
+ *                                        single item (kept for back-compat)
  */
 
 import { z } from "zod"
@@ -60,27 +62,65 @@ const orderStatusInput = z.object({
     .regex(/^0x[a-fA-F0-9]{40}$/)
     .optional(),
 })
+const shippingSchema = z.object({
+  name: z.string().min(1),
+  zip: z.string().min(1),
+  prefecture: z.string().min(1),
+  address1: z.string().min(1),
+  address2: z.string().optional(),
+  tel: z.string().min(1),
+})
+
+const giftRecipientSchema = z.object({
+  name: z.string().min(1),
+  tel: z.string().min(1),
+  zip: z.string().min(1),
+  prefecture: z.string().min(1),
+  address1: z.string().min(1),
+  address2: z.string().optional(),
+})
+
+const purchaseCartInput = z.object({
+  shop_id: z.string().min(1),
+  items: z
+    .array(
+      z.object({
+        product_id: z.string().min(1),
+        quantity: z.number().int().positive(),
+        /** Required when the product has variants (e.g. {"サイズ":"M"}). */
+        variant_selections: z.record(z.string()).optional(),
+      }),
+    )
+    .min(1),
+  /** Required — the order-confirmation email goes here. */
+  customer_email: z.string().email(),
+  /** Optional: pick a chain from the items' common `available_chains`. */
+  preferred_chain_id: z.number().int().positive().optional(),
+  /** Required when any item has requires_shipping === true. */
+  shipping: shippingSchema.optional(),
+  is_gift: z.boolean().optional(),
+  /** Required when is_gift is true. */
+  gift_recipient: giftRecipientSchema.optional(),
+  customer_note: z.string().optional(),
+  /** Shop-defined checkout options (のし / arrival time, etc.). */
+  checkout_options: z.record(z.union([z.string(), z.boolean()])).optional(),
+  /** Hard budget cap (atomic JPYC, 18 decimals). Refuses if challenge asks more. */
+  max_amount_atomic: z.string().regex(/^\d+$/).optional(),
+})
+
 const purchaseInput = z.object({
   product_id: z.string().min(1),
   quantity: z.number().int().positive(),
-  /** Optional: pick a specific chain from the product's `available_chains`. */
+  /** Required — the shop_id the product belongs to (get it via get_product). */
+  shop_id: z.string().min(1),
+  /** Required — the order-confirmation email goes here. */
+  customer_email: z.string().email(),
   preferred_chain_id: z.number().int().positive().optional(),
   /** Required when the product has variants (e.g. {"サイズ":"M"}). */
   variant_selections: z.record(z.string()).optional(),
   /** Required when product.requires_shipping === true. */
-  shipping: z
-    .object({
-      name: z.string().min(1),
-      email: z.string().email().optional(),
-      zip: z.string().min(1),
-      prefecture: z.string().min(1),
-      address1: z.string().min(1),
-      address2: z.string().optional(),
-      tel: z.string().min(1),
-    })
-    .optional(),
+  shipping: shippingSchema.optional(),
   customer_note: z.string().optional(),
-  /** Hard budget cap (atomic JPYC, 18 decimals). Refuses if challenge asks more. */
   max_amount_atomic: z.string().regex(/^\d+$/).optional(),
 })
 
@@ -140,7 +180,7 @@ export const tools = {
   get_nft_discounts: {
     name: "get_nft_discounts",
     description:
-      "List NFT-based discount rules for a shop. (Note: x402 purchase path does not apply these discounts today — they are informational only. To use NFT discounts, the legacy /api/v1/orders path is required.)",
+      "List NFT-based discount rules for a shop. Informational: the MCP purchase tools do not auto-apply NFT discounts. The /api/v1/checkout endpoint accepts a `discount` block, but computing it requires holding the qualifying NFT and is not wired into this MCP server yet.",
     inputSchema: shopSlugInput,
     handler: async ({ shop_slug }, deps) => {
       const client = new EcClient({ baseUrl: deps.resolveApiBaseUrl() })
@@ -171,83 +211,145 @@ export const tools = {
     },
   } satisfies ToolDef<z.infer<typeof orderStatusInput>, unknown>,
 
-  purchase_product: {
-    name: "purchase_product",
+  purchase_cart: {
+    name: "purchase_cart",
     description:
       [
-        "End-to-end purchase via x402. Performs the full two-shot flow:",
-        "  1) POST /api/v1/products/{id}/checkout without PAYMENT-SIGNATURE",
-        "     → server returns 402 + PAYMENT-REQUIRED + reservation_id",
-        "  2) Sign EIP-3009 TransferWithAuthorization with the agent's wallet",
-        "  3) POST again with PAYMENT-SIGNATURE → server settles on-chain",
-        "     and returns the finalized order (status=collected) + tx_hash.",
+        "End-to-end multi-item purchase via x402. Performs the full two-shot flow:",
+        "  1) POST /api/v1/checkout without PAYMENT-SIGNATURE",
+        "     → server returns 402 + PAYMENT-REQUIRED + reservation_id + a",
+        "       price summary (subtotal / discount / shipping / options / total)",
+        "  2) Sign an EIP-3009 TransferWithAuthorization with the agent's wallet",
+        "  3) POST again with PAYMENT-SIGNATURE → server settles on-chain and",
+        "     returns the finalized order (status=collected) + tx_hash.",
+        "",
+        "This is the single purchase entry point. Human shoppers and AI agents",
+        "use the same /api/v1/checkout endpoint.",
         "",
         "BEFORE calling, ALWAYS:",
-        "  • Call get_product first.",
-        "  • If product.requires_shipping is true, ask the user for name,",
-        "    zip, prefecture, address1, tel (email + address2 optional) and",
-        "    pass them as the `shipping` block. Skipping shipping for a",
-        "    shipping-required product fails with 400 shipping_required and",
-        "    is NOT a payment problem — paying does not fix a missing address.",
-        "  • If product.variants is non-null, ask the user to pick options",
-        "    (e.g. {\"サイズ\":\"M\"}) and pass them as `variant_selections`.",
-        "  • Confirm the total JPYC price with the user before signing.",
+        "  • Call get_product on each item first.",
+        "  • All items must belong to the same shop_id.",
+        "  • If ANY item has requires_shipping=true, ask the user for name,",
+        "    zip, prefecture, address1, tel (address2 optional) and pass them",
+        "    as `shipping`. Missing shipping for a shipping-required item",
+        "    fails with 400 shipping_required — paying does not fix a missing",
+        "    address.",
+        "  • For each item whose product.variants is non-null, ask the user to",
+        "    pick options (e.g. {\"サイズ\":\"M\"}) and pass them as the item's",
+        "    `variant_selections`.",
+        "  • customer_email is REQUIRED — the order confirmation goes there.",
+        "  • If is_gift is true, gift_recipient is required.",
+        "  • Confirm the total JPYC price (from the step-1 summary) with the",
+        "    user before signing.",
         "  • Optionally set `max_amount_atomic` as a budget cap; the tool",
         "    refuses to sign if the challenge requires more than that.",
         "",
         "Requires BUYER_PRIVATE_KEY in the MCP server environment.",
       ].join("\n"),
+    inputSchema: purchaseCartInput,
+    handler: async (input, deps) => {
+      return runX402Cart(input, deps)
+    },
+  } satisfies ToolDef<z.infer<typeof purchaseCartInput>, unknown>,
+
+  purchase_product: {
+    name: "purchase_product",
+    description:
+      [
+        "Single-item purchase. Thin wrapper over purchase_cart for the common",
+        "case of buying one product. Prefer purchase_cart when buying multiple",
+        "items or when you need gift / checkout-option fields.",
+        "",
+        "BEFORE calling: call get_product, supply shop_id + customer_email,",
+        "and provide `shipping` (if requires_shipping) and `variant_selections`",
+        "(if the product has variants). See purchase_cart for the full rules.",
+        "",
+        "Requires BUYER_PRIVATE_KEY in the MCP server environment.",
+      ].join("\n"),
     inputSchema: purchaseInput,
     handler: async (input, deps) => {
-      const client = new EcClient({ baseUrl: deps.resolveApiBaseUrl() })
-      const account = deps.resolveSigner()
-
-      // Step 1: ask for a 402 challenge (this also reserves stock).
-      const challenge = await client.requestX402Challenge(input.product_id, {
-        quantity: input.quantity,
-        preferred_chain_id: input.preferred_chain_id,
-        variant_selections: input.variant_selections,
-        shipping: input.shipping,
-        customer_note: input.customer_note,
-      })
-      const required = decodeHeader<PaymentRequired>(challenge.paymentRequiredHeader)
-      const requirements = required.accepts[0]
-      if (!requirements) {
-        throw new Error("PaymentRequired.accepts[] is empty")
-      }
-
-      // Budget guard — agent-side responsibility per x402 design.
-      if (input.max_amount_atomic !== undefined) {
-        if (BigInt(requirements.amount) > BigInt(input.max_amount_atomic)) {
-          throw new Error(
-            `agent budget exceeded: required=${requirements.amount} max=${input.max_amount_atomic}`,
-          )
-        }
-      }
-
-      // Step 2: sign the authorization for the JPYC chain in the challenge.
-      const payload = await signAndBuildPayload({ account, requirements })
-
-      // Step 3: settle.
-      const settle = await client.submitX402Payment(
-        input.product_id,
-        challenge.reservationId,
-        encodeHeader(payload),
-      )
-
-      return {
-        ok: settle.status === 200,
-        status: settle.status,
-        body: settle.body,
-        challenge: {
-          reservation_id: challenge.reservationId,
-          amount_atomic: requirements.amount,
-          amount_jpyc: formatJpycFromAtomic(requirements.amount),
-          network: requirements.network,
-          asset: requirements.asset,
-          pay_to: requirements.payTo,
+      return runX402Cart(
+        {
+          shop_id: input.shop_id,
+          items: [
+            {
+              product_id: input.product_id,
+              quantity: input.quantity,
+              variant_selections: input.variant_selections,
+            },
+          ],
+          customer_email: input.customer_email,
+          preferred_chain_id: input.preferred_chain_id,
+          shipping: input.shipping,
+          customer_note: input.customer_note,
+          max_amount_atomic: input.max_amount_atomic,
         },
-      }
+        deps,
+      )
     },
   } satisfies ToolDef<z.infer<typeof purchaseInput>, unknown>,
+}
+
+/**
+ * Shared x402 two-shot runner used by purchase_cart and purchase_product.
+ * Requests the 402 challenge, enforces the optional budget cap, signs the
+ * TransferWithAuthorization, and settles.
+ */
+async function runX402Cart(
+  input: z.infer<typeof purchaseCartInput>,
+  deps: ToolDeps,
+) {
+  const client = new EcClient({ baseUrl: deps.resolveApiBaseUrl() })
+  const account = deps.resolveSigner()
+
+  // Step 1: 402 challenge (also reserves stock for 5 minutes).
+  const challenge = await client.requestX402Challenge({
+    shop_id: input.shop_id,
+    items: input.items,
+    customer_email: input.customer_email,
+    preferred_chain_id: input.preferred_chain_id,
+    shipping: input.shipping,
+    is_gift: input.is_gift,
+    gift_recipient: input.gift_recipient,
+    customer_note: input.customer_note,
+    checkout_options: input.checkout_options,
+  })
+  const required = decodeHeader<PaymentRequired>(challenge.paymentRequiredHeader)
+  const requirements = required.accepts[0]
+  if (!requirements) {
+    throw new Error("PaymentRequired.accepts[] is empty")
+  }
+
+  // Budget guard — agent-side responsibility per x402 design.
+  if (input.max_amount_atomic !== undefined) {
+    if (BigInt(requirements.amount) > BigInt(input.max_amount_atomic)) {
+      throw new Error(
+        `agent budget exceeded: required=${requirements.amount} max=${input.max_amount_atomic}`,
+      )
+    }
+  }
+
+  // Step 2: sign the TransferWithAuthorization for the challenge's chain.
+  const payload = await signAndBuildPayload({ account, requirements })
+
+  // Step 3: settle.
+  const settle = await client.submitX402Payment(
+    challenge.reservationId,
+    encodeHeader(payload),
+  )
+
+  return {
+    ok: settle.status === 200,
+    status: settle.status,
+    body: settle.body,
+    challenge: {
+      reservation_id: challenge.reservationId,
+      summary: challenge.summary,
+      amount_atomic: requirements.amount,
+      amount_jpyc: formatJpycFromAtomic(requirements.amount),
+      network: requirements.network,
+      asset: requirements.asset,
+      pay_to: requirements.payTo,
+    },
+  }
 }

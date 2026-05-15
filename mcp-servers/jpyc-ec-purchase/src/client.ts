@@ -6,7 +6,11 @@
  *   - GET  /api/v1/products?shop=     — list products
  *   - GET  /api/v1/products/:id       — product detail
  *   - GET  /api/v1/orders?customer_address=  — order history
- *   - POST /api/v1/products/:id/checkout (x402 two-shot)
+ *   - POST /api/v1/checkout           — x402 multi-item cart checkout (two-shot)
+ *
+ * The single-product `POST /api/v1/products/:id/checkout` is deprecated on the
+ * server (it proxies to /api/v1/checkout and returns Deprecation/Sunset
+ * headers). This client targets /api/v1/checkout directly.
  */
 
 import { type Address, type Hex, parseUnits } from "viem"
@@ -62,18 +66,13 @@ export class EcClient {
     return this.get(`/api/v1/orders?customer_address=${encodeURIComponent(customerAddress)}`)
   }
 
-  /** Step 1 of x402 checkout — request a payment challenge. */
-  async requestX402Challenge(
-    productId: string,
-    body: {
-      quantity: number
-      preferred_chain_id?: number
-      variant_selections?: Record<string, string>
-      shipping?: Record<string, string>
-      customer_note?: string
-    },
-  ): Promise<X402Challenge> {
-    const url = `${this.baseUrl}/api/v1/products/${encodeURIComponent(productId)}/checkout`
+  /**
+   * Step 1 of x402 cart checkout — POST /api/v1/checkout without a
+   * PAYMENT-SIGNATURE header. Returns the 402 challenge: a reservation_id,
+   * the decoded amount summary, and the raw PAYMENT-REQUIRED header.
+   */
+  async requestX402Challenge(body: X402CheckoutBody): Promise<X402Challenge> {
+    const url = `${this.baseUrl}/api/v1/checkout`
     const res = await this.rawPost(url, body, {})
     if (res.status !== 402) {
       const text = await res.text()
@@ -83,24 +82,33 @@ export class EcClient {
     if (!required) {
       throw new Error("missing PAYMENT-REQUIRED header in 402 response")
     }
-    const json = (await res.json()) as { data?: { reservation_id?: string; expires_at_unix_ms?: number } }
+    const json = (await res.json()) as {
+      data?: {
+        reservation_id?: string
+        expires_at_unix_ms?: number
+        summary?: Record<string, string>
+      }
+    }
     if (!json.data?.reservation_id) {
       throw new Error("response body missing data.reservation_id")
     }
     return {
       reservationId: json.data.reservation_id,
       expiresAtUnixMs: json.data.expires_at_unix_ms ?? 0,
+      summary: json.data.summary ?? {},
       paymentRequiredHeader: required,
     }
   }
 
-  /** Step 2 of x402 checkout — submit signed payload. */
+  /**
+   * Step 2 of x402 cart checkout — POST /api/v1/checkout with the
+   * PAYMENT-SIGNATURE header. The body carries only the reservation_id.
+   */
   async submitX402Payment(
-    productId: string,
     reservationId: string,
     paymentSignatureHeader: string,
   ): Promise<X402SettlementResult> {
-    const url = `${this.baseUrl}/api/v1/products/${encodeURIComponent(productId)}/checkout`
+    const url = `${this.baseUrl}/api/v1/checkout`
     const res = await this.rawPost(url, { reservation_id: reservationId }, {
       "PAYMENT-SIGNATURE": paymentSignatureHeader,
     })
@@ -150,9 +158,43 @@ export class EcClient {
   }
 }
 
+/** Request body for POST /api/v1/checkout (step 1, no PAYMENT-SIGNATURE). */
+export interface X402CheckoutBody {
+  shop_id: string
+  items: Array<{
+    product_id: string
+    quantity: number
+    variant_selections?: Record<string, string>
+  }>
+  customer_email: string
+  preferred_chain_id?: number
+  shipping?: {
+    name: string
+    zip: string
+    prefecture: string
+    address1: string
+    address2?: string
+    tel: string
+  }
+  is_gift?: boolean
+  gift_recipient?: {
+    name: string
+    tel: string
+    zip: string
+    prefecture: string
+    address1: string
+    address2?: string
+  }
+  customer_note?: string
+  checkout_options?: Record<string, string | boolean>
+}
+
 export interface X402Challenge {
   reservationId: string
   expiresAtUnixMs: number
+  /** Amount breakdown: subtotal_jpyc / discount_jpyc / shipping_jpyc /
+   * checkout_options_surcharge_jpyc / total_jpyc. */
+  summary: Record<string, string>
   /** base64url JSON of x402 PaymentRequired. */
   paymentRequiredHeader: string
 }

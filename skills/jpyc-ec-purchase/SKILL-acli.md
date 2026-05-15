@@ -15,13 +15,16 @@ description: Purchase products from JPYC EC Platform via x402 using shell/curl-s
 ## Decision tree (必ず最初に実行)
 
 ```
-1. GET  /api/v1/products/{id}                ← requires_shipping / variants 確認
-2. POST /api/v1/products/{id}/checkout       ← 402 + reservation_id
+1. GET  /api/v1/products/{id}        ← requires_shipping / variants 確認 (商品ごと)
+2. POST /api/v1/checkout             ← 402 + reservation_id + 金額サマリ
        (no PAYMENT-SIGNATURE)
-3. EIP-712 sign + build PaymentPayload
-4. POST /api/v1/products/{id}/checkout       ← 200 + 注文成立
-       (with PAYMENT-SIGNATURE)
+3. EIP-712 sign (TransferWithAuthorization) + build PaymentPayload
+4. POST /api/v1/checkout             ← 200 + 注文成立
+       (with PAYMENT-SIGNATURE, body は reservation_id のみ)
 ```
+
+注文は `POST /api/v1/checkout` 一本。`items[]` で複数商品をまとめられます
+(1 商品なら配列に 1 件)。
 
 `requires_shipping=true` の商品で住所を渡さないと `400 shipping_required` が返ります。
 これは **支払えば解決する問題ではない** ので、エージェントは住所を聞いて step 2 から
@@ -56,9 +59,12 @@ curl -i -sS \
   -X POST \
   -H "Content-Type: application/json" \
   --data '{
-    "quantity": 1,
+    "shop_id": "{SHOP_ID}",
     "preferred_chain_id": 137,
-    "variant_selections": { "サイズ": "M" },
+    "items": [
+      { "product_id": "{PRODUCT_ID}", "quantity": 1, "variant_selections": { "サイズ": "M" } }
+    ],
+    "customer_email": "buyer@example.com",
     "shipping": {
       "name": "山田太郎",
       "zip": "150-0001",
@@ -67,7 +73,7 @@ curl -i -sS \
       "tel": "090-1234-5678"
     }
   }' \
-  https://ec.jpyc-service.com/api/v1/products/{PRODUCT_ID}/checkout
+  https://ec.jpyc-service.com/api/v1/checkout
 ```
 
 成功時 (HTTP 402):
@@ -80,7 +86,14 @@ Content-Type: application/json
 {
   "ok": false,
   "error": { "code": "payment_required", "message": "PAYMENT-SIGNATURE header is required" },
-  "data": { "reservation_id": "res_a1b2...", "expires_at_unix_ms": 1731486100000 }
+  "data": {
+    "reservation_id": "res_a1b2...",
+    "expires_at_unix_ms": 1731486100000,
+    "summary": {
+      "subtotal_jpyc": "5000", "discount_jpyc": "0", "shipping_jpyc": "500",
+      "checkout_options_surcharge_jpyc": "0", "total_jpyc": "5500"
+    }
+  }
 }
 ```
 
@@ -132,16 +145,21 @@ echo "$PAYMENT_REQUIRED_B64" \
 
 | フィールド | 必須 | メモ |
 |-----------|------|------|
-| `quantity` | ✅ | int > 0 |
-| `preferred_chain_id` | 任意 | `shop.available_chains` 内のいずれか |
-| `variant_selections` | `variants !== null` のとき必須 | `{ option_name: value }` |
-| `shipping` | `requires_shipping === true` のとき必須 | name / zip / prefecture / address1 / tel が必須 |
+| `shop_id` | ✅ | 全 `items` が同一ショップである必要がある |
+| `items[]` | ✅ | `product_id` + `quantity` (+ `variant_selections`)。最低 1 件 |
+| `items[].variant_selections` | `variants !== null` の商品で必須 | `{ option_name: value }` |
+| `customer_email` | ✅ | 注文確認メールの宛先 |
+| `preferred_chain_id` | 任意 | 全 `items` の `available_chains` の積集合内 |
+| `shipping` | いずれかの item が `requires_shipping` のとき必須 | name / zip / prefecture / address1 / tel |
+| `is_gift` / `gift_recipient` | 任意 | 贈り物のとき両方セット |
+| `checkout_options` | 任意 | ショップ定義オプション (のし等) |
 | `customer_note` | 任意 | max 2000 文字 |
 
 エラーコード:
 
-- `400 invalid_body` / `400 invalid_quantity`
+- `400 invalid_body`
 - `400 shipping_required` ← 住所聞いてリトライ
+- `400 shop_mismatch` ← items に別ショップの商品が混在
 - `400 variant_required` / `400 invalid_variant`
 - `400 x402_disabled` ← このショップは x402 未対応
 - `404 product_not_found` / `404 shop_not_found`
@@ -230,7 +248,7 @@ curl -i -sS \
   -H "Content-Type: application/json" \
   -H "PAYMENT-SIGNATURE: $PAYMENT_SIGNATURE" \
   --data "{\"reservation_id\":\"$RESERVATION_ID\"}" \
-  https://ec.jpyc-service.com/api/v1/products/{PRODUCT_ID}/checkout
+  https://ec.jpyc-service.com/api/v1/checkout
 ```
 
 成功 (HTTP 200):
@@ -286,7 +304,7 @@ curl -sS https://ec.jpyc-service.com/api/v1/categories | jq .
 curl -sS "https://ec.jpyc-service.com/api/v1/orders?customer_address=0x..." | jq .
 ```
 
-`order_status` の意味: 1=未署名 (レガシー経路のみ), 2=署名済み (レガシー経路のみ), 3=決済完了 (**x402 はここから開始**), 9=期限切れ。
+`order_status` の意味: 3=決済完了 (`/api/v1/checkout` 経由はここから開始), 9=期限切れ。1/2 は旧フローの名残で新規注文では発生しない。
 
 ### NFT 割引ルール
 
@@ -294,7 +312,8 @@ curl -sS "https://ec.jpyc-service.com/api/v1/orders?customer_address=0x..." | jq
 curl -sS https://ec.jpyc-service.com/api/v1/shops/{SLUG}/nft-discounts | jq .
 ```
 
-x402 経路は現在 NFT 割引未対応。NFT 割引を活用したい購入は既存レガシー経路を使う。
+`/api/v1/checkout` は `discount` ブロックを受け付けるが、対象 NFT の保有確認と
+割引額算出は呼び出し側の責務。情報取得のみのエンドポイント。
 
 ### 残高チェック (任意)
 
@@ -340,8 +359,8 @@ step 2 が正しく動いているかの最小確認:
 ```bash
 curl -isS -X POST \
   -H "Content-Type: application/json" \
-  -d '{"quantity":1}' \
-  https://ec.jpyc-service.com/api/v1/products/{PRODUCT_ID}/checkout \
+  -d '{"shop_id":"{SHOP_ID}","items":[{"product_id":"{PRODUCT_ID}","quantity":1}],"customer_email":"test@example.com"}' \
+  https://ec.jpyc-service.com/api/v1/checkout \
   | head -20
 ```
 
