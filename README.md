@@ -7,7 +7,7 @@ This repo ships two complementary pieces:
 | Path | What it is | Use it from |
 | ---- | ---------- | ----------- |
 | [`skills/jpyc-ec-purchase/`](./skills/jpyc-ec-purchase) | Claude Code [Skill](https://docs.anthropic.com/en/docs/claude-code/plugins) — markdown reference describing the EC API and x402 flow | Claude Code (CLI / Desktop) |
-| [`mcp-servers/jpyc-ec-purchase/`](./mcp-servers/jpyc-ec-purchase) | Model Context Protocol server — invokable tools (`search_products`, `purchase_product`, …) for any MCP-capable agent | Claude Desktop, Cursor, OpenAI Agents SDK, and any MCP host |
+| [`mcp-servers/jpyc-ec-purchase/`](./mcp-servers/jpyc-ec-purchase) | Model Context Protocol server — invokable tools (`list_shops`, `get_product`, `purchase_cart`, …) for any MCP-capable agent | Claude Desktop, Cursor, OpenAI Agents SDK, and any MCP host |
 
 Both target the same surface: the JPYC EC Platform's public `/api/v1` routes plus the x402 v2 checkout endpoint.
 
@@ -58,9 +58,19 @@ A standalone MCP server exposing eight tools:
 | `get_nft_discounts` | `GET /api/v1/shops/:slug/nft-discounts` |
 | `get_categories` | `GET /api/v1/categories` |
 | `get_order_status` | `GET /api/v1/orders?customer_address=` |
-| `purchase_product` | `POST /api/v1/products/:id/checkout` (x402, called twice) |
+| `purchase_cart` | `POST /api/v1/checkout` (x402, called twice) |
+| `purchase_product` | `POST /api/v1/checkout` (x402, called twice — single-item shim over `purchase_cart`) |
 
-`purchase_product` runs the full x402 dance: fetches the 402 challenge, signs an EIP-3009 `transferWithAuthorization` with the agent's wallet, submits the signed payload, returns the finalized order. Accepts an optional `max_amount_atomic` budget cap so a misbehaving (or hijacked) agent can't overspend.
+`purchase_cart` runs the full x402 dance: fetches the 402 challenge, signs an
+EIP-3009 `transferWithAuthorization` with the agent's wallet, submits the
+signed payload, returns the finalized order. `purchase_product` is a thin
+single-item wrapper over it. Both accept an optional `max_amount_atomic`
+budget cap so a misbehaving (or hijacked) agent can't overspend.
+
+> Both purchase tools target the unified `POST /api/v1/checkout` endpoint.
+> The older single-product `POST /api/v1/products/:id/checkout` route was
+> removed on the platform — human shoppers and AI agents now share one
+> checkout endpoint.
 
 ### Configure (Claude Desktop)
 
