@@ -400,7 +400,7 @@ curl -sS -X POST \
 
 | 環境 | Base URL | チェーン ID |
 |------|---------|------------|
-| Production | `https://ec.jpyc-service.com` | 1 / 137 / 43114 |
+| Production | `https://ec.jpyc-service.com` | 1 / 137 / 43114 / 8217 |
 | Staging | `https://stg-ec.jpyc-service.com` | 11155111 / 80002 / 43113 / 1001 / 5042002 |
 
 メインネット ID をステージングに送ると、その環境ではそのチェーンが使えないため

@@ -15,8 +15,8 @@ AI エージェントが **JPYC EC Platform** (https://ec.jpyc-service.com) の�
 
 - **ガス代不要**: エージェント側はゼロ。プラットフォームの facilitator が gas を支払う
 - **1 ショット決済**: HTTP 1 往復で settle が完了 (注文作成と署名提出を分けない)
-- **マルチチェーン**: Ethereum / Polygon / Avalanche / Sepolia / Amoy / Fuji /
-  Kairos / Arc に対応
+- **マルチチェーン**: Ethereum / Polygon / Avalanche / Kaia / Sepolia / Amoy /
+  Fuji / Kairos / Arc に対応
 - **AI 向け設計**: 認証なし、ウォレットアドレス + 署名 = identity
 
 ---
@@ -32,7 +32,7 @@ AI エージェントが **JPYC EC Platform** (https://ec.jpyc-service.com) の�
 
 | 環境 | Base URL | 対応チェーン ID |
 |------|---------|-----------------|
-| Production | `https://ec.jpyc-service.com` | 1 (Ethereum), 137 (Polygon), 43114 (Avalanche) |
+| Production | `https://ec.jpyc-service.com` | 1 (Ethereum), 137 (Polygon), 43114 (Avalanche), 8217 (Kaia) |
 | Staging | `https://stg-ec.jpyc-service.com` | 11155111 (Sepolia), 80002 (Amoy), 43113 (Fuji), 1001 (Kairos), 5042002 (Arc) |
 
 メインネット ID をステージングに、テストネット ID を本番に送ると、その環境では
