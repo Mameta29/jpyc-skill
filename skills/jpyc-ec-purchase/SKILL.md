@@ -481,6 +481,24 @@ Content-Type: application/json
 | `GET /api/v1/products/{id}/reviews` | 商品レビュー一覧 |
 | `GET /api/v1/categories` | カテゴリ・タグの一覧 |
 
+### Agent discovery surface
+
+REST API を直接叩く以外に、プラットフォームはエージェント向けの発見・
+対話レイヤーを公開している。
+
+| Endpoint | 用途 |
+|---------|------|
+| `GET /.well-known/commerce-manifest` | プラットフォームの能力・エンドポイント・x402 決済レール一覧 (Open Agentic Commerce 形式) |
+| `GET /.well-known/agent-card.json` | A2A Agent Card |
+| `GET /api/v1/openapi.yaml` | OpenAPI 3.1 仕様 |
+| `GET /llms.txt` | LLM 向け Markdown インデックス |
+| `POST /mcp` | MCP サーバー (Streamable HTTP)。商品検索・購入ツールを提供 |
+
+MCP ホスト (Claude Desktop / Cursor 等) からは `POST /mcp` に接続すると、
+`search_products` / `get_product` / `quote_checkout` / `submit_payment`
+などのツールが使える。本スキルの REST 手順は、MCP を使わず HTTP を直接
+叩くエージェント向け。
+
 ### Order tracking
 
 ```http
@@ -664,9 +682,10 @@ async function purchaseCart(shopId: string, productId: string, quantity = 1) {
   ツールは現状 NFT 割引を自動適用しない
 - **贈り物 / のし等のオプション**: `is_gift` / `gift_recipient` / `checkout_options`
   を `/api/v1/checkout` の body に渡せる
-- **旧 endpoint**: `POST /api/v1/products/:id/checkout` は `/api/v1/checkout`
-  へ転送する deprecated プロキシ (`Deprecation` / `Sunset` ヘッダ付き)。
-  新規実装は `/api/v1/checkout` を直接使うこと。`POST /api/v1/orders` 系は廃止済み
+- **廃止済みの旧 endpoint**: `POST /api/v1/products/:id/checkout` と
+  `POST /api/v1/orders` 系は廃止済み。購入は `POST /api/v1/checkout`
+  （人間の買い物客と AI エージェント共通の単一エンドポイント）に一本化
+  されている
 - **送料**: `requires_shipping=true` の商品は **送料込みの amount** が `accepts[0].amount`
   に入って返る。エージェント側で別途送料計算は不要 (PaymentRequired を信頼すれば OK)
 - **エラーコード `errorReason`**: x402 v2 spec で定義された code をそのまま返す

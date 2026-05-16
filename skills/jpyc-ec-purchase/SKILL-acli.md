@@ -334,6 +334,25 @@ curl -sS https://ec.jpyc-service.com/api/v1/products/{PRODUCT_ID}/reviews | jq .
 curl -sS https://ec.jpyc-service.com/api/v1/categories | jq .
 ```
 
+### Agent discovery surface
+
+REST を直接叩く以外に、エージェント向けの発見レイヤーが公開されている。
+
+```bash
+# プラットフォームの能力・エンドポイント・x402 決済レール一覧
+curl -sS https://ec.jpyc-service.com/.well-known/commerce-manifest | jq .
+# A2A Agent Card
+curl -sS https://ec.jpyc-service.com/.well-known/agent-card.json | jq .
+# OpenAPI 3.1 仕様
+curl -sS https://ec.jpyc-service.com/api/v1/openapi.yaml
+# LLM 向け Markdown インデックス
+curl -sS https://ec.jpyc-service.com/llms.txt
+```
+
+MCP ホストからは `POST https://ec.jpyc-service.com/mcp` (Streamable HTTP)
+に接続すると商品検索・購入ツールが使える。この acli 手順は MCP を使わず
+HTTP を直接叩くエージェント向け。
+
 ### 注文履歴
 
 ```bash
