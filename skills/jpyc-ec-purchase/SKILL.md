@@ -77,6 +77,7 @@ GET https://ec.jpyc-service.com/api/v1/products/{productId}
   "data": {
     "product": {
       "id": "uuid",
+      "slug": "matcha-latte",
       "name": "商品名",
       "description": "...",
       "price_jpyc": "1500.000000000000000000",
@@ -480,6 +481,12 @@ Content-Type: application/json
 | `GET /api/v1/products/{id}` | 商品詳細 (step 1) |
 | `GET /api/v1/products/{id}/reviews` | 商品レビュー一覧 |
 | `GET /api/v1/categories` | カテゴリ・タグの一覧 |
+
+> **`product.slug` について**: 商品レスポンスの `slug` は人間可読な商品URL用の
+> 値です (商品ページURL = `/shops/{shop.slug}/products/{slug ?? id}`、`null` の
+> 場合は `id` を使う)。**チェックアウトの `items[].product_id` には必ず商品の
+> `id` (UUID) を使ってください** — `slug` は URL 表示専用で、API リクエストの
+> 識別子としては使いません。
 
 ### Agent discovery surface
 

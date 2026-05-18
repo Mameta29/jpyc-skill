@@ -42,6 +42,9 @@ curl -sS https://ec.jpyc-service.com/api/v1/products/{PRODUCT_ID} | jq .
 
 - `data.product.requires_shipping` (bool) — true なら shipping ブロック必須
 - `data.product.variants` (object | null) — 非 null なら `variant_selections` 必須
+- `data.product.slug` (string | null) — 人間可読な商品URL用の値。商品ページURL
+  は `/shops/{shop.slug}/products/{slug ?? id}`。**チェックアウトの `product_id`
+  には必ず `id` (UUID) を使う** — `slug` は URL 表示専用。
 - `data.shop.available_chains` (number[]) — 払えるチェーン ID
 - `data.shop.default_chain_id` — チェーン指定省略時のデフォルト
 - `data.shop.x402_enabled` (bool) — **false ならこのショップは x402 購入不可**。
