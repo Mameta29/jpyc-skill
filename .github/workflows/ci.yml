@@ -25,9 +25,12 @@ jobs:
 
       # The repo is an npm workspace (workspaces: ["mcp-servers/*"]); install
       # and the root scripts both run from the repo root so they resolve
-      # against the single root lockfile.
+      # against the single root lockfile. `npm install` (not `npm ci`) is
+      # used because `npm ci` can skip platform-specific optional deps such
+      # as @rollup/rollup-linux-x64-gnu (npm/cli#4828); the lockfile is still
+      # honored and committed.
       - name: Install
-        run: npm ci
+        run: npm install --no-audit --no-fund
 
       - name: Typecheck
         run: npm run typecheck

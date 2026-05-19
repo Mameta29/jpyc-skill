@@ -27,11 +27,13 @@ jobs:
           cache-dependency-path: package-lock.json
           registry-url: "https://registry.npmjs.org/"
 
-      # The repo is an npm workspace; a single root `npm ci` installs both
+      # The repo is an npm workspace; a single root install pulls both
       # @changesets/cli (root devDep) and the package's deps from the one
-      # root lockfile.
+      # root lockfile. `npm install` (not `npm ci`) is used because `npm ci`
+      # can skip platform-specific optional deps such as
+      # @rollup/rollup-linux-x64-gnu (npm/cli#4828).
       - name: Install
-        run: npm ci
+        run: npm install --no-audit --no-fund
 
       - name: Pre-publish build + test
         run: |
