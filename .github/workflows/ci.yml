@@ -21,20 +21,19 @@ jobs:
         with:
           node-version: "22"
           cache: npm
-          cache-dependency-path: mcp-servers/jpyc-ec-purchase/package-lock.json
+          cache-dependency-path: package-lock.json
 
+      # The repo is an npm workspace (workspaces: ["mcp-servers/*"]); install
+      # and the root scripts both run from the repo root so they resolve
+      # against the single root lockfile.
       - name: Install
-        working-directory: mcp-servers/jpyc-ec-purchase
         run: npm ci
 
       - name: Typecheck
-        working-directory: mcp-servers/jpyc-ec-purchase
         run: npm run typecheck
 
       - name: Test
-        working-directory: mcp-servers/jpyc-ec-purchase
         run: npm test
 
       - name: Build
-        working-directory: mcp-servers/jpyc-ec-purchase
         run: npm run build

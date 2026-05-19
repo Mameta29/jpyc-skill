@@ -24,18 +24,16 @@ jobs:
         with:
           node-version: "22"
           cache: npm
-          cache-dependency-path: mcp-servers/jpyc-ec-purchase/package-lock.json
+          cache-dependency-path: package-lock.json
           registry-url: "https://registry.npmjs.org/"
 
-      - name: Install root devDeps (changesets)
-        run: npm install --no-save @changesets/cli@^2.27.10
-
-      - name: Install package deps
-        working-directory: mcp-servers/jpyc-ec-purchase
+      # The repo is an npm workspace; a single root `npm ci` installs both
+      # @changesets/cli (root devDep) and the package's deps from the one
+      # root lockfile.
+      - name: Install
         run: npm ci
 
       - name: Pre-publish build + test
-        working-directory: mcp-servers/jpyc-ec-purchase
         run: |
           npm run typecheck
           npm test
