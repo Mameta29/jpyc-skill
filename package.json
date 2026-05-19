@@ -5,6 +5,9 @@
   "description": "AI agent skill + MCP server for buying on JPYC EC Platform",
   "license": "MIT",
   "author": "Mameta29",
+  "workspaces": [
+    "mcp-servers/*"
+  ],
   "scripts": {
     "build": "npm --prefix mcp-servers/jpyc-ec-purchase run build",
     "test": "npm --prefix mcp-servers/jpyc-ec-purchase test",
