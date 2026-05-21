@@ -521,6 +521,12 @@ GET https://ec.jpyc-service.com/api/v1/orders?customer_address=0x...
 - `9` — 期限切れ
 - `1` / `2` — 旧フロー (未署名 / 署名済み回収待ち) の名残。新規注文では発生しない
 
+各注文には `refunds[]` フィールドが付き、ショップが過去に行った返金履歴
+(完了したものだけ) が時系列で並ぶ。1 注文に対して複数回の部分返金がある
+ケースを含む。各 refund は `{ amount_jpyc, tx_hash, chain_id, completed_at }`
+の形。pending/failed の内部状態は外部に出さない。実際の受領金額を計算する
+場合は `total_jpyc - sum(refunds[].amount_jpyc)` をすると良い。
+
 ### Balance check (optional)
 
 署名前に残高を事前確認したいとき:

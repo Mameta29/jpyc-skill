@@ -364,6 +364,8 @@ curl -sS "https://ec.jpyc-service.com/api/v1/orders?customer_address=0x..." | jq
 
 `order_status` の意味: 3=決済完了 (`/api/v1/checkout` 経由はここから開始), 9=期限切れ。1/2 は旧フローの名残で新規注文では発生しない。
 
+各 order に `refunds[]` (完了済み返金履歴) が付く。1 注文に対して複数の部分返金が積み重なるケースあり。各 refund は `{ amount_jpyc, tx_hash, chain_id, completed_at }`。実際の受領金額は `total_jpyc - sum(refunds[].amount_jpyc)`。
+
 ### NFT 割引ルール
 
 ```bash
