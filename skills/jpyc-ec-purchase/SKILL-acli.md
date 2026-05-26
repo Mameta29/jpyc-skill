@@ -55,8 +55,8 @@ curl -sS https://ec.jpyc-service.com/api/v1/products/{PRODUCT_ID} | jq .
   必須**。値を送らないと `400 invalid_checkout_option`。`id` をキーに
   `checkout_options` で値を渡す (下記参照)
 - `data.shop.is_demo` (bool) — true なら**デモショップ**。x402 フローを JPYC
-  残高ゼロで体験できる。settle で on-chain 送金は行われず、`tx_hash` は全ゼロの
-  ハッシュ (`0x0000...0000`) のダミー値。リクエスト/署名手順は通常ショップと同一
+  残高ゼロで体験できる。settle で on-chain 送金は行われず、`tx_hash` は
+  `0xde30…` で始まるダミー値 (注文ごとにユニーク)。リクエスト/署名手順は通常ショップと同一
 
 `checkout_options` の各要素:
 
@@ -305,7 +305,8 @@ PAYMENT-RESPONSE: eyJzdWNjZXNzIjp0cnVlLC...
 ```
 
 > `data.is_demo` が `true` ならデモショップの注文。on-chain 送金は行われず
-> `tx_hash` は全ゼロのハッシュ (`0x0000...0000`) のダミー値 (エクスプローラでは引けない)。
+> `tx_hash` は `0xde30…` で始まるダミー値 (注文ごとにユニーク、エクスプローラでは引けない)。
+> デモ判定は `is_demo` で行い (tx_hash の中身に依存しない)、
 > ユーザーには「デモ決済で実際の JPYC 送金はない」と明示すること。
 
 エラー (status / code):

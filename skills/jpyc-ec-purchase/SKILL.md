@@ -173,8 +173,9 @@ GET https://ec.jpyc-service.com/api/v1/products/{productId}
 > リクエスト/レスポンスの形・署名手順は通常ショップと完全に同一ですが、
 > settle で **on-chain 送金が行われません** (facilitator を経由しない)。
 > - JPYC 残高ゼロのウォレットでも settle が成功する
-> - `tx_hash` は全ゼロのハッシュ (`0x0000...0000`) のダミー値。ブロック
->   エクスプローラでは引けないので、エクスプローラ URL を提示しないこと
+> - `tx_hash` は `0xde30…` で始まるダミー値 (注文ごとにユニーク)。ブロック
+>   エクスプローラでは引けないので、エクスプローラ URL を提示しないこと。
+>   デモ判定は `data.is_demo === true` で行うこと (tx_hash の中身に依存しない)
 > - settle 成功レスポンスの `data.is_demo` が `true` で返る
 > - 署名 (EIP-712) の検証はサーバ側で行われるため、不正な署名は弾かれる
 
@@ -446,7 +447,7 @@ Content-Type: application/json
 (Polygonscan / Etherscan / Snowtrace 等) でそのまま検索できます。
 
 > **`data.is_demo`**: `true` ならデモショップの注文です。on-chain 送金は
-> 行われておらず、`tx_hash` は全ゼロのハッシュ (`0x0000...0000`) のダミー値で
+> 行われておらず、`tx_hash` は `0xde30…` で始まるダミー値 (注文ごとにユニーク) で
 > エクスプローラでは引けません。`is_demo: true` のときはユーザーに「これは
 > デモ決済で、実際の JPYC 送金は行われていません」と明示してください。
 
