@@ -367,6 +367,20 @@ curl -sS "https://ec.jpyc-service.com/api/v1/orders?customer_address=0x..." | jq
 
 各 order に `refunds[]` (完了済み返金履歴) が付く。1 注文に対して複数の部分返金が積み重なるケースあり。各 refund は `{ amount_jpyc, tx_hash, chain_id, completed_at }`。実際の受領金額は `total_jpyc - sum(refunds[].amount_jpyc)`。
 
+発送状況は `order_status` (決済) とは別に返る: `shipping_status` (`null`=配送不要/発送準備前, `pending`=発送準備中, `shipped`=発送済み, `delivered`=配送完了), `shipped_at`, `tracking_number`, `shipping_carrier`。「発送済みか」は `order_status` ではなく `shipping_status` で判断する (決済完了でも未発送なら `null`/`pending`)。デジタル商品・配送先なしの注文は常に `null`。
+
+### デジタル商品ダウンロード
+
+商品が `is_digital: true` なら、決済完了 (`order_status: 3`) 後に署名付きダウンロード URL を発行できる。
+
+```bash
+curl -sS -X POST "https://ec.jpyc-service.com/api/v1/orders/{ORDER_NUMBER}/download" \
+  -H "Content-Type: application/json" \
+  -d '{"customer_address":"0x...","product_id":"..."}' | jq .
+```
+
+レスポンス `data`: `{ url, file_name, version, expires_in_seconds }`。本人確認は注文記録との照合 (注文番号 + 購入ウォレット + 商品 ID)。ファイルは 2 種類: **アップロード型** は `url` が短命な署名付き URL で `expires_in_seconds` 秒 (既定 300) で失効するため取得後すぐ DL する。**外部URL型** は `url` がショップ登録の外部 URL で有効期限がなく `expires_in_seconds` は `null`。常に最新版が返る (ショップがファイルを差し替えても同手順で最新版取得)。エラー: `ORDER_NOT_FOUND`(404) / `FORBIDDEN`・`NOT_PURCHASED`(403) / `NO_FILE`(404) / `RATE_LIMITED`(429)。
+
 ### NFT 割引ルール
 
 ```bash

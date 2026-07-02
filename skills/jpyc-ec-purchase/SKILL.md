@@ -528,6 +528,46 @@ GET https://ec.jpyc-service.com/api/v1/orders?customer_address=0x...
 の形。pending/failed の内部状態は外部に出さない。実際の受領金額を計算する
 場合は `total_jpyc - sum(refunds[].amount_jpyc)` をすると良い。
 
+**発送状況** — `order_status` (決済) とは独立して、物理商品の発送状況が
+次のフィールドで返る:
+
+- `shipping_status` — `null` (配送不要 or 発送準備前) / `"pending"` (発送準備中) /
+  `"shipped"` (発送済み) / `"delivered"` (配送完了)
+- `shipped_at` — 発送日時 (ISO8601, nullable)
+- `tracking_number` — 追跡番号 (nullable)
+- `shipping_carrier` — 配送業者名 (nullable)
+
+決済完了 (`order_status: 3`) でも `shipping_status` が `null`/`pending` の
+うちはまだ発送されていない。ユーザーに「発送済みか」を答えるときは
+`order_status` ではなく `shipping_status` を見ること。デジタル商品や配送先の
+ない注文では `shipping_status` は常に `null`。
+
+### Digital product download
+
+商品が `is_digital: true` のデジタル商品 (ダウンロード商品) の場合、決済完了
+(`order_status: 3`) 後にダウンロード URL を発行できる:
+
+```http
+POST https://ec.jpyc-service.com/api/v1/orders/{order_number}/download
+Content-Type: application/json
+
+{ "customer_address": "0x...", "product_id": "..." }
+```
+
+レスポンス `data`: `{ url, file_name, version, expires_in_seconds }`。本人確認は
+注文記録との照合 (注文番号 + 購入ウォレット + 商品 ID) で行われる。
+
+ファイルには 2 種類ある:
+
+- **アップロード型**: `url` は短命な署名付き URL。`expires_in_seconds` 秒
+  (既定 300) で失効するため取得後すぐにダウンロードすること。
+- **外部URL型**: `url` はショップが登録した外部 URL。有効期限がないため
+  `expires_in_seconds` は `null`。
+
+常に最新版ファイルが返るため、ショップがファイルを差し替えても同じ手順で
+最新版を取得できる (`version` で確認可能)。エラーは `ORDER_NOT_FOUND` (404) /
+`FORBIDDEN`・`NOT_PURCHASED` (403) / `NO_FILE` (404) / `RATE_LIMITED` (429)。
+
 ### Balance check (optional)
 
 署名前に残高を事前確認したいとき:
