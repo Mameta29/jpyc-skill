@@ -373,13 +373,25 @@ curl -sS "https://ec.jpyc-service.com/api/v1/orders?customer_address=0x..." | jq
 
 商品が `is_digital: true` なら、決済完了 (`order_status: 3`) 後に署名付きダウンロード URL を発行できる。
 
+**本人確認は SIWE 署名チャレンジ** (自己申告アドレスは不可)。手順: ① nonce 取得 → ② SIWE メッセージを購入ウォレットで `personal_sign` → ③ download に提出。
+
 ```bash
+# 1. nonce 取得 (5 分有効・使い捨て)
+curl -sS -X POST "https://ec.jpyc-service.com/api/auth/siwe/nonce" \
+  -H "Content-Type: application/json" \
+  -d '{"address":"0x<購入ウォレット>"}' | jq -r .nonce
+
+# 2. SIWE メッセージ (EIP-4361, domain=ec.jpyc-service.com,
+#    uri=https://ec.jpyc-service.com, nonce=上記, chainId=購入時のチェーン) を
+#    組み立てて personal_sign で署名 (送金なし)
+
+# 3. ダウンロード URL 発行
 curl -sS -X POST "https://ec.jpyc-service.com/api/v1/orders/{ORDER_NUMBER}/download" \
   -H "Content-Type: application/json" \
-  -d '{"customer_address":"0x...","product_id":"..."}' | jq .
+  -d '{"message":"<SIWEメッセージ全文>","signature":"0x<署名>","product_id":"..."}' | jq .
 ```
 
-レスポンス `data`: `{ url, file_name, version, expires_in_seconds }`。本人確認は注文記録との照合 (注文番号 + 購入ウォレット + 商品 ID)。ファイルは 2 種類: **アップロード型** は `url` が短命な署名付き URL で `expires_in_seconds` 秒 (既定 300) で失効するため取得後すぐ DL する。**外部URL型** は `url` がショップ登録の外部 URL で有効期限がなく `expires_in_seconds` は `null`。常に最新版が返る (ショップがファイルを差し替えても同手順で最新版取得)。エラー: `ORDER_NOT_FOUND`(404) / `FORBIDDEN`・`NOT_PURCHASED`(403) / `NO_FILE`(404) / `RATE_LIMITED`(429)。
+レスポンス `data`: `{ url, file_name, version, expires_in_seconds }`。署名者アドレスが注文の購入ウォレットと一致する場合のみ発行。ファイルは 2 種類: **アップロード型** は `url` が短命な署名付き URL で `expires_in_seconds` 秒 (既定 300) で失効するため取得後すぐ DL する。**外部URL型** は `url` がショップ登録の外部 URL で有効期限がなく `expires_in_seconds` は `null`。常に最新版が返る (ショップがファイルを差し替えても同手順で最新版取得)。エラー: `MISSING_SIGNATURE`・`INVALID_MESSAGE`(400) / `UNAUTHORIZED`(401: nonce 期限切れ・署名不正) / `ORDER_NOT_FOUND`(404) / `FORBIDDEN`・`NOT_PURCHASED`(403) / `NO_FILE`(404) / `RATE_LIMITED`(429)。
 
 ### NFT 割引ルール
 

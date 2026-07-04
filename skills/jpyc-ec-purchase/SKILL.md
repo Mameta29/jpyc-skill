@@ -545,17 +545,54 @@ GET https://ec.jpyc-service.com/api/v1/orders?customer_address=0x...
 ### Digital product download
 
 商品が `is_digital: true` のデジタル商品 (ダウンロード商品) の場合、決済完了
-(`order_status: 3`) 後にダウンロード URL を発行できる:
+(`order_status: 3`) 後にダウンロード URL を発行できる。
+
+**本人確認は SIWE (Sign-In with Ethereum) 署名チャレンジ**。ウォレットアドレス
+は公開情報のため、自己申告アドレスでは本人確認にならない。購入ウォレットの
+秘密鍵で署名できることを証明する必要がある (署名のみ・送金は発生しない)。
+
+手順:
+
+1. nonce を取得 (5 分有効・使い捨て):
+
+```http
+POST https://ec.jpyc-service.com/api/auth/siwe/nonce
+Content-Type: application/json
+
+{ "address": "0x<購入ウォレット>" }
+```
+
+レスポンス: `{ "nonce": "<hex>" }`
+
+2. SIWE メッセージ (EIP-4361) を組み立てて `personal_sign` で署名する。
+   `domain` / `uri` は EC のもの、`nonce` は手順 1 の値を使うこと
+   (サーバが domain と nonce を検証する):
+
+```
+domain:    ec.jpyc-service.com
+address:   0x<購入ウォレット>
+statement: Sign to download your purchased file. No token transfer will occur.
+uri:       https://ec.jpyc-service.com
+version:   1
+chainId:   <購入時の chain_id>
+nonce:     <手順 1 の nonce>
+issuedAt:  <現在時刻 ISO8601>
+```
+
+(siwe ライブラリなら `new SiweMessage({...}).prepareMessage()` の出力を署名)
+
+3. ダウンロード URL を発行:
 
 ```http
 POST https://ec.jpyc-service.com/api/v1/orders/{order_number}/download
 Content-Type: application/json
 
-{ "customer_address": "0x...", "product_id": "..." }
+{ "message": "<SIWE メッセージ全文>", "signature": "0x<署名>", "product_id": "..." }
 ```
 
-レスポンス `data`: `{ url, file_name, version, expires_in_seconds }`。本人確認は
-注文記録との照合 (注文番号 + 購入ウォレット + 商品 ID) で行われる。
+レスポンス `data`: `{ url, file_name, version, expires_in_seconds }`。
+署名者アドレスが注文の購入ウォレットと一致し、その注文に該当商品が含まれる
+場合のみ発行される。
 
 ファイルには 2 種類ある:
 
@@ -565,8 +602,10 @@ Content-Type: application/json
   `expires_in_seconds` は `null`。
 
 常に最新版ファイルが返るため、ショップがファイルを差し替えても同じ手順で
-最新版を取得できる (`version` で確認可能)。エラーは `ORDER_NOT_FOUND` (404) /
-`FORBIDDEN`・`NOT_PURCHASED` (403) / `NO_FILE` (404) / `RATE_LIMITED` (429)。
+最新版を取得できる (`version` で確認可能)。エラーは
+`MISSING_SIGNATURE`・`INVALID_MESSAGE` (400) / `UNAUTHORIZED` (401: nonce
+期限切れ・署名不正) / `ORDER_NOT_FOUND` (404) / `FORBIDDEN`・`NOT_PURCHASED`
+(403) / `NO_FILE` (404) / `RATE_LIMITED` (429)。
 
 ### Balance check (optional)
 
