@@ -460,7 +460,7 @@ Content-Type: application/json
 | 402 | `invalid_exact_evm_payload_signature` | 署名が不正 / 期限切れ | 再署名 |
 | 402 | `invalid_exact_evm_payload_authorization_valid_before` | 90s 超過 | step 2 からやり直し (新しい reservation を取得) |
 | 402 | `insufficient_funds` | JPYC 残高不足 | ユーザーに「残高不足です」と通知 |
-| 404 | `reservation_not_found` | reservation 5 分超過 | step 2 からやり直し |
+| 404 | `reservation_not_found` | reservation 5 分超過 (※決済済み reservation への再送では返らない — 下記「冪等リプレイ」参照) | step 2 からやり直し |
 | 404 | `product_disappeared` | 商品が削除された | 別の商品提案 |
 | 409 | `insufficient_stock` | 在庫切れ | 別の商品提案 |
 | 409 | `shop_wallet_changed` | ショップがウォレット変更 | step 2 からやり直し |
@@ -468,6 +468,15 @@ Content-Type: application/json
 | 502 | `facilitator_insufficient_native_balance` | facilitator (relayer) の gas 切れ | リトライ (運営に自動通知される。復旧まで数分かかることがある) |
 | 502 | `settlement_failed` | facilitator が settle 失敗 (上記以外) | リトライ。繰り返すなら運営に問い合わせ |
 | 502 | `unexpected_settle_error` | facilitator が分類不能な例外を捕捉 | リトライ。繰り返すなら運営に問い合わせ |
+| 502 | `facilitator_unreachable` | 決済サービスに接続不可 (資金は動いていない) | リトライ |
+| 502 | `settle_precondition_failed` | settle 前の記録に失敗 (資金は動いていない) | リトライ |
+| 502 | `authorization_already_used` | **この nonce は既にオンチェーンで消費済み = 支払いは成立している** | `settlement_state_unknown` と同じ扱い: 再署名せず `GET /orders` で注文を確認 (自動復旧される) |
+| 502 | `settlement_state_unknown` | **決済結果が不明 (資金が動いている可能性あり)** | **絶対に即再署名・再購入しない**。2〜3 分待って `GET /orders?customer_address=...` を確認。注文があれば決済成功 (自動復旧)。無ければ安全に再試行できる |
+
+> **冪等リプレイ (2026-07 追加)**: 同じ `reservation_id` + `PAYMENT-SIGNATURE` で
+> settle を再送した場合、既に決済済みなら同じ注文情報が 200 で返る。
+> トランスポートエラー (接続断・タイムアウト) 後のリトライは安全。
+> `settlement_state_unknown` を受けた場合のみ、上記の手順で状態確認を挟むこと。
 
 ---
 

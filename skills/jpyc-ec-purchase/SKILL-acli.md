@@ -318,12 +318,15 @@ PAYMENT-RESPONSE: eyJzdWNjZXNzIjp0cnVlLC...
 | 402 | `invalid_exact_evm_payload_signature` | 再署名 |
 | 402 | `invalid_exact_evm_payload_authorization_valid_before` | reservation 期限切れ→step 2 やり直し |
 | 402 | `insufficient_funds` | JPYC 残高不足 |
-| 404 | `reservation_not_found` | 5 分超過→step 2 やり直し |
+| 404 | `reservation_not_found` | 5 分超過→step 2 やり直し (決済済みへの再送では返らない: 冪等リプレイで 200) |
 | 404 | `product_disappeared` | 商品削除 |
 | 409 | `insufficient_stock` / `shop_wallet_changed` | step 2 からやり直し |
 | 429 | `rate_limited` | 数秒待ち |
 | 502 | `facilitator_insufficient_native_balance` | facilitator の gas 切れ。リトライ (運営に自動通知。復旧まで数分かかることも) |
 | 502 | `settlement_failed` / `unexpected_settle_error` | facilitator が settle 失敗。リトライ。繰り返すなら運営に問い合わせ |
+| 502 | `facilitator_unreachable` / `settle_precondition_failed` | 資金は動いていない。リトライ可 |
+| 502 | `authorization_already_used` | 支払い成立済み。再署名せず `GET /orders` を確認 (注文は自動復旧) |
+| 502 | `settlement_state_unknown` | **資金が動いた可能性あり。即再署名しない**。2〜3 分後に `GET /orders?customer_address=...` を確認 — 注文があれば成功 (自動復旧)、無ければ再試行可 |
 
 ---
 
