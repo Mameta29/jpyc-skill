@@ -230,6 +230,7 @@ Content-Type: application/json
 | `is_gift` / `gift_recipient` | 任意 | 贈り物のとき `is_gift: true` + `gift_recipient` |
 | `checkout_options` | 任意 | ショップ定義のオプション (のし等) の選択値 |
 | `customer_note` | 任意 | ショップへの伝言 (max 2000 文字) |
+| `payer_address` | 任意 (推奨) | 署名するウォレットアドレス。指定すると settle 時に署名の `from` と照合され、別ウォレットの署名は 400 `payer_mismatch` になる (2026-07 追加) |
 
 レスポンス (HTTP 402):
 
@@ -419,7 +420,9 @@ PAYMENT-SIGNATURE: eyJ4NDAyVmVyc2lvbiI6Mi...   (base64url JSON)
 ```
 
 > 2 回目の body は `reservation_id` だけです。`items` 等は再送しません
-> (1 回目で reservation snapshot に固定済み)。
+> (1 回目で reservation snapshot に固定済み)。任意で `line_id_token`
+> (LIFF の ID トークン、LINE Mini App 決済専用) を渡せますが、外部
+> エージェントには関係ありません — 省略してください (2026-07 追加)。
 
 **成功レスポンス** (HTTP 200):
 
@@ -457,6 +460,7 @@ Content-Type: application/json
 |--------|------|------|-------------------|
 | 400 | `invalid_payment_payload` | base64 や JSON が壊れている | 再構築 |
 | 400 | `payload_mismatch` | 署名内容が reservation と不一致 | step 2 からやり直し |
+| 400 | `payer_mismatch` | 1 回目の `payer_address` と署名の `from` が不一致 (2026-07 追加) | 同じ reservation のまま正しいウォレットで再署名して再送 |
 | 402 | `invalid_exact_evm_payload_signature` | 署名が不正 / 期限切れ | 再署名 |
 | 402 | `invalid_exact_evm_payload_authorization_valid_before` | 90s 超過 | step 2 からやり直し (新しい reservation を取得) |
 | 402 | `insufficient_funds` | JPYC 残高不足 | ユーザーに「残高不足です」と通知 |

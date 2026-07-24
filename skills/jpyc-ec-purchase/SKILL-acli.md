@@ -20,7 +20,7 @@ description: Purchase products from JPYC EC Platform via x402 using shell/curl-s
        (no PAYMENT-SIGNATURE)
 3. EIP-712 sign (TransferWithAuthorization) + build PaymentPayload
 4. POST /api/v1/checkout             ← 200 + 注文成立
-       (with PAYMENT-SIGNATURE, body は reservation_id のみ)
+       (with PAYMENT-SIGNATURE, body は reservation_id のみ。任意の line_id_token は LINE Mini App 専用 — 外部エージェントは省略)
 ```
 
 注文は `POST /api/v1/checkout` 一本。`items[]` で複数商品をまとめられます
@@ -180,6 +180,7 @@ echo "$PAYMENT_REQUIRED_B64" \
 | `is_gift` / `gift_recipient` | 任意 | 贈り物のとき両方セット |
 | `checkout_options` | 任意 | ショップ定義オプション (のし等) |
 | `customer_note` | 任意 | max 2000 文字 |
+| `payer_address` | 任意 (推奨) | 署名するウォレット。settle 時に署名の `from` と照合。不一致は 400 `payer_mismatch` (2026-07 追加) |
 
 エラーコード:
 
@@ -315,6 +316,7 @@ PAYMENT-RESPONSE: eyJzdWNjZXNzIjp0cnVlLC...
 |--------|------|------|
 | 400 | `invalid_payment_payload` | base64 / JSON を見直し |
 | 400 | `payload_mismatch` | step 2 からやり直し |
+| 400 | `payer_mismatch` | `payer_address` と署名 `from` の不一致。正しいウォレットで再署名して同じ reservation に再送 (2026-07 追加) |
 | 402 | `invalid_exact_evm_payload_signature` | 再署名 |
 | 402 | `invalid_exact_evm_payload_authorization_valid_before` | reservation 期限切れ→step 2 やり直し |
 | 402 | `insufficient_funds` | JPYC 残高不足 |
