@@ -231,6 +231,7 @@ Content-Type: application/json
 | `checkout_options` | 任意 | ショップ定義のオプション (のし等) の選択値 |
 | `customer_note` | 任意 | ショップへの伝言 (max 2000 文字) |
 | `payer_address` | 任意 (推奨) | 署名するウォレットアドレス。指定すると settle 時に署名の `from` と照合され、別ウォレットの署名は 400 `payer_mismatch` になる (2026-07 追加) |
+| `pos_session_id` | 使用しない | 運営の対面レジ UI 専用の内部フィールド (`ps_<16hex>`、レジ画面の決済完了検知用)。外部クライアント / エージェントは送らないこと (2026-08 追加) |
 
 レスポンス (HTTP 402):
 

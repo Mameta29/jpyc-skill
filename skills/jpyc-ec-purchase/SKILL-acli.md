@@ -181,6 +181,7 @@ echo "$PAYMENT_REQUIRED_B64" \
 | `checkout_options` | 任意 | ショップ定義オプション (のし等) |
 | `customer_note` | 任意 | max 2000 文字 |
 | `payer_address` | 任意 (推奨) | 署名するウォレット。settle 時に署名の `from` と照合。不一致は 400 `payer_mismatch` (2026-07 追加) |
+| `pos_session_id` | 使用しない | 対面レジ UI 専用の内部フィールド。エージェントは送らない (2026-08 追加) |
 
 エラーコード:
 
