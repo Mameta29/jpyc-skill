@@ -618,8 +618,13 @@ Content-Type: application/json
 常に最新版ファイルが返るため、ショップがファイルを差し替えても同じ手順で
 最新版を取得できる (`version` で確認可能)。エラーは
 `MISSING_SIGNATURE`・`INVALID_MESSAGE` (400) / `UNAUTHORIZED` (401: nonce
-期限切れ・署名不正) / `ORDER_NOT_FOUND` (404) / `FORBIDDEN`・`NOT_PURCHASED`
-(403) / `NO_FILE` (404) / `RATE_LIMITED` (429)。
+期限切れ・使用済み・署名不正・署名先ドメイン不一致) / `ORDER_NOT_FOUND` (404) / `FORBIDDEN`・`NOT_PURCHASED`
+(403) / `NO_FILE` (404) / `RATE_LIMITED` (429) / `AUTH_UNAVAILABLE` (503: サービス側の認証設定不足)。
+
+nonce は並行リクエスト間でも1回しか使用できない。再試行する場合は新しいnonceを取得し、
+対象のECドメインと購入時のチェーンで再署名する。スマートウォレットの署名も、
+SIWEに指定したチェーン上で検証される。`AUTH_UNAVAILABLE` の場合は再署名を繰り返さず、
+サービス側の設定確認が必要な状態として扱う。
 
 ### Balance check (optional)
 
