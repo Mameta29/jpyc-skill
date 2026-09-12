@@ -57,7 +57,7 @@ description: Purchase products from JPYC EC Platform via x402 using shell/curl-s
 
 上記 `accepted` の説明文字列は実際のリクエストではJSONオブジェクトに置換してください。`txHash` は任意のヒントです。ウォレットがUserOperation hashしか返さなくても、サーバーがJPYCのTransferログを調べます。送金前の所有確認を省略して、過去の送金を後付けで注文に充当することはできません。
 
-送金後の `transfer_not_found` は承認ブロック待ちの場合があります。同じ予約・payloadで結果確認だけを再試行し、transferを再送したり、新規予約で再購入したりしないでください。送金応答が失われた場合も同じ扱いです。予約が期限切れになった場合や確定状態が不明な場合は、注文履歴・運営の確認へ進みます。対面レジ（`/pos`）・定期便・LINEの `/pay` 画面・JPYC Pay charges APIは、このAA決済対応の対象外です。
+送金後の `transfer_not_found` は承認ブロック待ちの場合があります。同じ予約・payloadで結果確認だけを再試行し、transferを再送したり、新規予約で再購入したりしないでください。送金応答が失われた場合も同じ扱いです。予約が期限切れになった場合や確定状態が不明な場合は、注文履歴・運営の確認へ進みます。通常カート（`/checkout`）、対面レジ（`/pos`）、LINEトーク注文の `/pay` 画面は、同じAA決済基盤に対応しています。LINEの旧予約でAA方式が提示されない場合は注文を作り直します。所有確認後のLINE予約はネットワークを変更できません。定期便・JPYC Pay charges APIは対象外です。
 
 ---
 
