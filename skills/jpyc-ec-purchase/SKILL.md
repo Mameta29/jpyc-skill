@@ -834,3 +834,18 @@ async function purchaseCart(shopId: string, productId: string, quantity = 1) {
 - **エラーコード `errorReason`**: x402 v2 spec で定義された code をそのまま返す
   (`insufficient_funds`, `invalid_exact_evm_payload_signature` 等)。詳細は
   [coinbase/x402 仕様 §9](https://github.com/coinbase/x402/blob/main/specs/x402-specification-v2.md) 参照
+
+## 2026-09-12 ステージングでの販売機能追加
+
+以下はステージング (`https://stg-ec.jpyc-service.com/api/v1`) の仕様です。本番に同じ機能があると推測せず、対象環境の商品レスポンスとOpenAPIで対応を確認してください。
+
+- 商品の `max_quantity_per_order` がある場合、同一商品のバリエーション違いを含む数量合計を上限以下にしてください。`null` は購入上限なしです。
+- `online_sale_status` (`coming_soon` / `on_sale` / `ended`)、`online_purchase_available`、販売開始・終了日時を確認してください。公開中でも販売期間外には購入できません。予約時にはサーバーが再検証し、409 `sale_not_started` / `sale_ended` / `quantity_limit_exceeded` を返す場合があります。
+- クーポンを利用するときは、初回checkoutに `coupon_code`、署名するウォレットの `payer_address`、16〜64文字の `idempotency_key` (UUID推奨) を送ります。通信断後は同じ購入内容・同じキーで再送し、返された予約と金額を使ってください。別の購入にキーを流用しません。
+- NFT割引は `discount: { rule_id }` だけを指定します。割引額や保有状態の自己申告は使われません。NFT割引とクーポンは併用不可です。
+- クーポンの総上限・ウォレット上限は予約時に確保されます。409 `coupon_total_limit_reached` / `coupon_wallet_limit_reached` / `coupon_not_applicable` / `coupon_changed` ではコードと条件を確認してください。別ウォレットでの制限回避を行ってはいけません。
+- `idempotency_conflict` はキーに対応する購入内容が変わっています。送金前かどうかを確認してから購入内容を見直してください。`zero_payment_total` はクーポン適用後が0 JPYC以下です。
+- AA所有確認後は送金APIの呼び出し前から利用枠を保持します。結果不明時には同じ予約で確認を続け、新規予約や送金の再実行はしません。
+- 商品検索 `GET /products/search` は `q` / `shop` / `tag` / `category` / `minPrice` / `maxPrice` / `inStock` / `sort` / `limit` / `offset` を受け取ります。`limit` は1〜50、`offset` は0〜10000です。レスポンスは `{ products, server_time, pagination: { limit, offset, hasMore } }` です。
+
+SIWEの認証nonceは、同じアドレスで再発行すると前のものが置き換わり、使用できるのは一度だけです。認証nonceと、送金に使うEIP-3009のnonceを混同しないでください。
