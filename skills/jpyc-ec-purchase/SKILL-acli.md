@@ -32,6 +32,35 @@ description: Purchase products from JPYC EC Platform via x402 using shell/curl-s
 
 ---
 
+## 決済方式の選択とAAウォレット
+
+`PAYMENT-REQUIRED.accepts` は複数の決済方式を含む場合があります。配列の順序を決済方式の判定に使わず、`extra.assetTransferMethod` で選択してください。
+
+本書の秘密鍵・EIP-712署名の例では `eip3009` を選択します。例中の `accepted` / `accepts` / `ACCEPTS_JSON` は、その選択済み要素を指します。対応要素が無ければ署名せず、対応ウォレットへ切り替えるよう案内してください。
+
+マイナウォレットなど、EIP-3009署名を作れないAAウォレットでは、ウォレット自身の署名・送金APIが使える場合に限り、次の手順で `erc20-transfer` を選択できます。EOAの秘密鍵だけを持つエージェントが、AAアドレスを自己申告して代行することはできません。
+
+1. 予約作成時に、支払元の `payer_address` と `transfer_authorization_version: "1"` を送ります。サーバーが `erc20-transfer` を提示したことを確認してください。
+2. 選んだ要素の `amount` / `asset` / `payTo` / `network` を確認します。表示合計 `summary.total_jpyc` を18桁のatomic unitsへ変換した値と `amount` が一致しなければ、署名・送金を開始しません。注文識別用の端数は足しません。
+3. `extra.payerAuthorization.message` を一文字も変更せず、支払元ウォレットで `personal_sign` します。この所有確認だけでは資金は動きません。
+4. `POST /api/v1/checkout/authorize-transfer` へ `{ "reservation_id": "res_...", "signature": "0x..." }` を送ります。サーバーはEOA / ERC-1271 / ERC-6492の署名を検証します。HTTP 200で成功するまで送金してはいけません。
+5. 予約ID・選択した要素・支払元を復旧用に保存してから、同じチェーンの `asset` コントラクトで `transfer(payTo, amount)` をウォレットから実行します。ガス代の負担はウォレットのスポンサー設定に依存します。
+6. `PAYMENT-SIGNATURE` には次のオブジェクトをbase64urlで符号化して指定し、通常と同じ `POST /api/v1/checkout` へbody `{ "reservation_id": "res_..." }` を送ります。
+
+```json
+{
+  "x402Version": 2,
+  "accepted": "選択したerc20-transfer要素を、payerAuthorizationを含めオブジェクトのままコピー",
+  "payload": { "payerAddress": "0x支払元", "txHash": "0x任意の送信結果" }
+}
+```
+
+上記 `accepted` の説明文字列は実際のリクエストではJSONオブジェクトに置換してください。`txHash` は任意のヒントです。ウォレットがUserOperation hashしか返さなくても、サーバーがJPYCのTransferログを調べます。送金前の所有確認を省略して、過去の送金を後付けで注文に充当することはできません。
+
+送金後の `transfer_not_found` は承認ブロック待ちの場合があります。同じ予約・payloadで結果確認だけを再試行し、transferを再送したり、新規予約で再購入したりしないでください。送金応答が失われた場合も同じ扱いです。予約が期限切れになった場合や確定状態が不明な場合は、注文履歴・運営の確認へ進みます。対面レジ（`/pos`）・定期便・LINEの `/pay` 画面・JPYC Pay charges APIは、このAA決済対応の対象外です。
+
+---
+
 ## Step 1 — Product info
 
 ```bash
@@ -267,7 +296,7 @@ const payload = {
 console.log(Buffer.from(JSON.stringify(payload)).toString("base64url"))
 EOF
 
-ACCEPTS_JSON=$(echo "$PAYMENT_REQUIRED_B64" | node -e 'process.stdout.write(Buffer.from(require("fs").readFileSync(0,"utf8").trim(),"base64url").toString())' | jq -c '.accepts[0]')
+ACCEPTS_JSON=$(echo "$PAYMENT_REQUIRED_B64" | node -e 'process.stdout.write(Buffer.from(require("fs").readFileSync(0,"utf8").trim(),"base64url").toString())' | jq -ce '[.accepts[] | select(.extra.assetTransferMethod == "eip3009")][0] // error("No supported eip3009 payment method")')
 PAYMENT_SIGNATURE=$(BUYER_PRIVATE_KEY=0x... node /tmp/sign-x402.mjs "$ACCEPTS_JSON")
 ```
 
@@ -429,7 +458,7 @@ curl -sS -X POST \
 ```
 
 ただし x402 経路は **1 回目の checkout 時点で送料込みの amount を確定** するので、
-事前試算は UI 表示用途のみ。署名する金額は必ず `PAYMENT-REQUIRED.accepts[0].amount`
+事前試算は UI 表示用途のみ。署名する金額は必ず `ACCEPTS_JSON.amount`
 を使ってください。
 
 ---

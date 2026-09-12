@@ -42,6 +42,35 @@ AI エージェントが **JPYC EC Platform** (https://ec.jpyc-service.com) の�
 
 ---
 
+## 決済方式の選択とAAウォレット
+
+`PAYMENT-REQUIRED.accepts` は複数の決済方式を含む場合があります。配列の順序を決済方式の判定に使わず、`extra.assetTransferMethod` で選択してください。
+
+本書の秘密鍵・EIP-712署名の例では `eip3009` を選択します。例中の `accepted` / `accepts` / `ACCEPTS_JSON` は、その選択済み要素を指します。対応要素が無ければ署名せず、対応ウォレットへ切り替えるよう案内してください。
+
+マイナウォレットなど、EIP-3009署名を作れないAAウォレットでは、ウォレット自身の署名・送金APIが使える場合に限り、次の手順で `erc20-transfer` を選択できます。EOAの秘密鍵だけを持つエージェントが、AAアドレスを自己申告して代行することはできません。
+
+1. 予約作成時に、支払元の `payer_address` と `transfer_authorization_version: "1"` を送ります。サーバーが `erc20-transfer` を提示したことを確認してください。
+2. 選んだ要素の `amount` / `asset` / `payTo` / `network` を確認します。表示合計 `summary.total_jpyc` を18桁のatomic unitsへ変換した値と `amount` が一致しなければ、署名・送金を開始しません。注文識別用の端数は足しません。
+3. `extra.payerAuthorization.message` を一文字も変更せず、支払元ウォレットで `personal_sign` します。この所有確認だけでは資金は動きません。
+4. `POST /api/v1/checkout/authorize-transfer` へ `{ "reservation_id": "res_...", "signature": "0x..." }` を送ります。サーバーはEOA / ERC-1271 / ERC-6492の署名を検証します。HTTP 200で成功するまで送金してはいけません。
+5. 予約ID・選択した要素・支払元を復旧用に保存してから、同じチェーンの `asset` コントラクトで `transfer(payTo, amount)` をウォレットから実行します。ガス代の負担はウォレットのスポンサー設定に依存します。
+6. `PAYMENT-SIGNATURE` には次のオブジェクトをbase64urlで符号化して指定し、通常と同じ `POST /api/v1/checkout` へbody `{ "reservation_id": "res_..." }` を送ります。
+
+```json
+{
+  "x402Version": 2,
+  "accepted": "選択したerc20-transfer要素を、payerAuthorizationを含めオブジェクトのままコピー",
+  "payload": { "payerAddress": "0x支払元", "txHash": "0x任意の送信結果" }
+}
+```
+
+上記 `accepted` の説明文字列は実際のリクエストではJSONオブジェクトに置換してください。`txHash` は任意のヒントです。ウォレットがUserOperation hashしか返さなくても、サーバーがJPYCのTransferログを調べます。送金前の所有確認を省略して、過去の送金を後付けで注文に充当することはできません。
+
+送金後の `transfer_not_found` は承認ブロック待ちの場合があります。同じ予約・payloadで結果確認だけを再試行し、transferを再送したり、新規予約で再購入したりしないでください。送金応答が失われた場合も同じ扱いです。予約が期限切れになった場合や確定状態が不明な場合は、注文履歴・運営の確認へ進みます。対面レジ（`/pos`）・定期便・LINEの `/pay` 画面・JPYC Pay charges APIは、このAA決済対応の対象外です。
+
+---
+
 ## Purchase Flow (x402)
 
 注文は **`POST /api/v1/checkout`** に一本化されています。人間ユーザーの
@@ -263,7 +292,7 @@ Content-Type: application/json
 > (`total_jpyc` は `"3500"`、`shipping_jpyc` は `"500.000000000000000000"` の
 > ように 18 桁付きで返ることがある)。表示前に `parseFloat` / `Number` で正規化
 > してください。実際に署名する金額は `summary` ではなく
-> `PAYMENT-REQUIRED.accepts[0].amount` (atomic units) を使うこと。
+> `accepted.amount` (atomic units) を使うこと。
 
 `PAYMENT-REQUIRED` ヘッダを base64url デコードすると以下の x402 v2 `PaymentRequired`
 構造体になります:
@@ -346,10 +375,10 @@ JPYC の `transferWithAuthorization` を EIP-712 で署名します。
 
 ```typescript
 {
-  name: "JPY Coin",                // 固定。accepts[0].extra.name と一致
-  version: "1",                    // 固定。accepts[0].extra.version と一致
-  chainId: 137,                    // accepts[0].network の eip155: 部分
-  verifyingContract: "0xE7C3D8C9a439feDe00D2600032D5dB0Be71C3c29"  // accepts[0].asset
+  name: "JPY Coin",                // 固定。accepted.extra.name と一致
+  version: "1",                    // 固定。accepted.extra.version と一致
+  chainId: 137,                    // accepted.network の eip155: 部分
+  verifyingContract: "0xE7C3D8C9a439feDe00D2600032D5dB0Be71C3c29"  // accepted.asset
 }
 ```
 
@@ -373,8 +402,8 @@ JPYC の `transferWithAuthorization` を EIP-712 で署名します。
 ```typescript
 {
   from: <agent wallet address>,                    // 署名者
-  to: <accepts[0].payTo>,                          // ショップ wallet
-  value: BigInt(<accepts[0].amount>),              // atomic units
+  to: <accepted.payTo>,                          // ショップ wallet
+  value: BigInt(<accepted.amount>),              // atomic units
   validAfter: 0n,                                  // 即座に有効
   validBefore: BigInt(Math.floor(Date.now() / 1000) + 90),  // now + 90s
   nonce: <32-byte random hex>                      // 0x + 64 hex
@@ -391,13 +420,13 @@ x402 v2 の `PaymentPayload` を組み立てます:
 ```json
 {
   "x402Version": 2,
-  "accepted": <accepts[0] を verbatim でコピー>,
+  "accepted": <accepted を verbatim でコピー>,
   "payload": {
     "signature": "0x<130-char hex>",  // 上の署名 (r + s + v)
     "authorization": {
       "from": "0x<agent wallet>",
-      "to": "0x<accepts[0].payTo>",
-      "value": "<accepts[0].amount>",
+      "to": "0x<accepted.payTo>",
+      "value": "<accepted.amount>",
       "validAfter": "0",
       "validBefore": "<unix sec>",
       "nonce": "0x<32 bytes hex>"
@@ -701,7 +730,8 @@ async function purchaseCart(shopId: string, productId: string, quantity = 1) {
   // 指定すると `-` `_` の置換が無く JSON が壊れることがあるので必ず "base64url"
   // を使うこと。
   const required = JSON.parse(Buffer.from(requiredHeader, "base64url").toString())
-  const accepts = required.accepts[0]
+  const accepts = required.accepts.find((a) => a.extra.assetTransferMethod === "eip3009")
+  if (!accepts) throw new Error("No supported eip3009 payment method")
   const { reservation_id } = (await challengeRes.json()).data
 
   // Confirm with user before signing (recommended)
@@ -794,7 +824,7 @@ async function purchaseCart(shopId: string, productId: string, quantity = 1) {
   `POST /api/v1/orders` 系は廃止済み。購入は `POST /api/v1/checkout`
   （人間の買い物客と AI エージェント共通の単一エンドポイント）に一本化
   されている
-- **送料**: `requires_shipping=true` の商品は **送料込みの amount** が `accepts[0].amount`
+- **送料**: `requires_shipping=true` の商品は **送料込みの amount** が `accepted.amount`
   に入って返る。エージェント側で別途送料計算は不要 (PaymentRequired を信頼すれば OK)
 - **エラーコード `errorReason`**: x402 v2 spec で定義された code をそのまま返す
   (`insufficient_funds`, `invalid_exact_evm_payload_signature` 等)。詳細は
