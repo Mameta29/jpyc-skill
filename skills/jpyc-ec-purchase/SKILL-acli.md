@@ -59,6 +59,31 @@ description: Purchase products from JPYC EC Platform via x402 using shell/curl-s
 
 送金後の `transfer_not_found` は承認ブロック待ちの場合があります。同じ予約・payloadで結果確認だけを再試行し、transferを再送したり、新規予約で再購入したりしないでください。送金応答が失われた場合も同じ扱いです。予約が期限切れになった場合や確定状態が不明な場合は、注文履歴・運営の確認へ進みます。通常カート（`/checkout`）、対面レジ（`/pos`）、LINEトーク注文の `/pay` 画面は、同じAA決済基盤に対応しています。LINEの旧予約でAA方式が提示されない場合は注文を作り直します。所有確認後のLINE予約はネットワークを変更できません。定期便・JPYC Pay charges APIは対象外です。
 
+
+## 0円デモの署名体験（マイナウォレット対応）
+
+デモショップ（`is_demo: true`）の合計0 JPYC注文では、ウォレット自身の `personal_sign` を使って注文完了まで体験できます。通常の送金フローとは別の `demo-signature` 方式です。
+
+1. 予約リクエストに `payer_address` と `demo_signature_version: "1"` を送ります（MCPの `quote_checkout` でも同じ指定）。
+2. `accepts` に `extra.assetTransferMethod: "demo-signature"` があること、`amount` と表示合計がともに0であること、ネットワークと受取先を確認します。提示がないときはこの方式を合成しないでください。
+3. 選択した `extra.payerAuthorization.message` を変更せず、対象ウォレットで `personal_sign` します。EOA / ERC-1271 / ERC-6492を検証できます。
+4. 通常と同じ `POST /api/v1/checkout` へ `{ "reservation_id": "res_..." }` を送り、`PAYMENT-SIGNATURE` ヘッダに以下のPaymentPayloadをbase64urlで渡します（MCPは `submit_payment`）。
+
+```json
+{
+  "x402Version": 2,
+  "accepted": "提示されたdemo-signature要素をオブジェクトのままコピー",
+  "payload": { "payerAddress": "0x対象ウォレット", "demoSignature": "0xpersonal_signの署名" }
+}
+```
+
+`accepted` の説明文字列は実際のJSONオブジェクトへ置き換えてください。`demoSignature` は偶数桁hex、最大16KiBです。
+
+この方式で `authorize-transfer`、`transfer`、`approve`、facilitatorは呼びません。JPYC残高・ガス代は不要です。成功時は `data.is_demo: true`、`tx_hash` はデモ用識別子です。通常店舗・有料注文には使えず、署名は予約・店舗・チェーン・ウォレット・有効期限に結びつきます。確認結果が受け取れなければ同じ予約と署名で再送してください。旧予約にdemo-signatureがない場合は、新しい予約を作成します。
+
+エラー: `demo_signature_unavailable` (400: 対象外)、`demo_signature_invalid` (402: 不正署名)、`demo_signature_verification_unavailable` (502: 検証RPC障害)、`reservation_expired` (400: 期限切れ)、`demo_checkout_failed` (502: 保存失敗)。いずれもこの方式から送金は発生しません。
+
+
 ---
 
 ## Step 1 — Product info
