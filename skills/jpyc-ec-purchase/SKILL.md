@@ -218,7 +218,7 @@ GET https://ec.jpyc-service.com/api/v1/products/{productId}
 
 ### Step 2 — Request 402 challenge
 
-`PAYMENT-SIGNATURE` ヘッダ **なし** で POST。サーバは在庫を 5 分間仮押さえし、
+`PAYMENT-SIGNATURE` ヘッダ **なし** で POST。サーバは在庫を確認して約5分間有効な予約を作成し、
 402 + `PAYMENT-REQUIRED` ヘッダ + 金額サマリを返します。
 
 ```http
@@ -259,7 +259,7 @@ Content-Type: application/json
 | `is_gift` / `gift_recipient` | 任意 | 贈り物のとき `is_gift: true` + `gift_recipient` |
 | `checkout_options` | 任意 | ショップ定義のオプション (のし等) の選択値 |
 | `customer_note` | 任意 | ショップへの伝言 (max 2000 文字) |
-| `payer_address` | 任意 (推奨) | 署名するウォレットアドレス。指定すると settle 時に署名の `from` と照合され、別ウォレットの署名は 400 `payer_mismatch` になる (2026-07 追加) |
+| `payer_address` | 通常は任意 (推奨)、AA・NFT割引・クーポンでは必須 | 署名するウォレットアドレス。指定すると settle 時に署名の `from` と照合され、別ウォレットの署名は 400 `payer_mismatch` になる (2026-07 追加) |
 | `pos_session_id` | 使用しない | 運営の対面レジ UI 専用の内部フィールド (`ps_<16hex>`、レジ画面の決済完了検知用)。外部クライアント / エージェントは送らないこと (2026-08 追加) |
 
 レスポンス (HTTP 402):
@@ -505,7 +505,7 @@ Content-Type: application/json
 | 502 | `facilitator_unreachable` | 決済サービスに接続不可 (資金は動いていない) | リトライ |
 | 502 | `settle_precondition_failed` | settle 前の記録に失敗 (資金は動いていない) | リトライ |
 | 502 | `authorization_already_used` | **この nonce は既にオンチェーンで消費済み = 支払いは成立している** | `settlement_state_unknown` と同じ扱い: 再署名せず `GET /orders` で注文を確認 (自動復旧される) |
-| 502 | `settlement_state_unknown` | **決済結果が不明 (資金が動いている可能性あり)** | **絶対に即再署名・再購入しない**。2〜3 分待って `GET /orders?customer_address=...` を確認。注文があれば決済成功 (自動復旧)。無ければ安全に再試行できる |
+| 502 | `settlement_state_unknown` | **決済結果が不明 (資金が動いている可能性あり)** | **絶対に即再署名・再購入しない**。2〜3 分待って `GET /orders?customer_address=...` を確認。注文があれば決済成功 (自動復旧)。無い場合も支払い未成立とは断定せず、同じ予約の状態照会または運営確認を続ける |
 
 > **冪等リプレイ (2026-07 追加)**: 同じ `reservation_id` + `PAYMENT-SIGNATURE` で
 > settle を再送した場合、既に決済済みなら同じ注文情報が 200 で返る。
@@ -649,6 +649,8 @@ Content-Type: application/json
 `MISSING_SIGNATURE`・`INVALID_MESSAGE` (400) / `UNAUTHORIZED` (401: nonce
 期限切れ・使用済み・署名不正・署名先ドメイン不一致) / `ORDER_NOT_FOUND` (404) / `FORBIDDEN`・`NOT_PURCHASED`
 (403) / `NO_FILE` (404) / `RATE_LIMITED` (429) / `AUTH_UNAVAILABLE` (503: サービス側の認証設定不足)。
+
+LINE連携用のSIWE署名は、`statement` や `resources` に専用の用途・LINEアカウントを含むため、ダウンロードやレシートなど別のAPIには転用できません。目的に合う新しいメッセージへ署名してください。
 
 nonce は並行リクエスト間でも1回しか使用できない。再試行する場合は新しいnonceを取得し、
 対象のECドメインと購入時のチェーンで再署名する。スマートウォレットの署名も、
@@ -817,12 +819,12 @@ async function purchaseCart(shopId: string, productId: string, quantity = 1) {
 - **Reservation lifetime**: 5 分。`maxTimeoutSeconds` (デフォルト 90 秒) より長く取って
   あるので、エージェントがユーザー確認しても余裕がある
 - **EIP-3009 nonce**: クライアント側で 32-byte ランダム生成。サーバ側生成は不要
-- **Stock**: step 2 で仮押さえ → step 3 成功で確定。途中で失敗すると 5 分後に自動解放
+- **Stock**: 予約時に数量を確認しますが、在庫は取り置きされません。決済確定時のDBトランザクションで在庫を再確認し、条件付きで減算します。クーポン利用枠の予約とは別です。
 - **多商品カート**: `POST /api/v1/checkout` は `items[]` で複数商品をまとめて
   購入できる。1 商品でも複数でも同じエンドポイント・同じ 1 回の署名で完結する
 - **Discount / NFT 割引**: `/api/v1/checkout` は `discount` ブロックを受け付ける
-  が、対象 NFT の保有確認と割引額の算出は呼び出し側の責務。本スキルの purchase
-  ツールは現状 NFT 割引を自動適用しない
+  が、`discount: { rule_id }` でルールだけを指定し、保有確認と割引額の算出は
+  サーバーが行います。署名する `payer_address` が必要で、クーポンとの併用はできません
 - **贈り物 / のし等のオプション**: `is_gift` / `gift_recipient` / `checkout_options`
   を `/api/v1/checkout` の body に渡せる
 - **廃止済みの旧 endpoint**: `POST /api/v1/products/:id/checkout` と
@@ -835,12 +837,13 @@ async function purchaseCart(shopId: string, productId: string, quantity = 1) {
   (`insufficient_funds`, `invalid_exact_evm_payload_signature` 等)。詳細は
   [coinbase/x402 仕様 §9](https://github.com/coinbase/x402/blob/main/specs/x402-specification-v2.md) 参照
 
-## 2026-09-12 ステージングでの販売機能追加
+## 2026-09-18 販売期間・数量上限・クーポン
 
-以下はステージング (`https://stg-ec.jpyc-service.com/api/v1`) の仕様です。本番に同じ機能があると推測せず、対象環境の商品レスポンスとOpenAPIで対応を確認してください。
+以下は本番とステージングの共通仕様です。ユーザーが選んだ環境の商品レスポンスとOpenAPIを確認し、その環境のAPI・対応チェーンを使ってください。
 
-- 商品の `max_quantity_per_order` がある場合、同一商品のバリエーション違いを含む数量合計を上限以下にしてください。`null` は購入上限なしです。
+- 同一商品の複数バリエーションはそれぞれ `items[]` の別行に指定できます。在庫と購入上限は商品単位の数量合計で判定されます。商品の `max_quantity_per_order` がある場合、同一商品のバリエーション違いを含む数量合計を上限以下にしてください。`null` は購入上限なしです。
 - `online_sale_status` (`coming_soon` / `on_sale` / `ended`)、`online_purchase_available`、販売開始・終了日時を確認してください。公開中でも販売期間外には購入できません。予約時にはサーバーが再検証し、409 `sale_not_started` / `sale_ended` / `quantity_limit_exceeded` を返す場合があります。
+- 販売期間の対面レジ例外は、ショップがPOS販売を許可した配送不要・バリエーションなしの商品だけに適用されます。外部購入クライアントは `X-JPYC-CLIENT: pos` や `pos_session_id` を送らず、販売開始を待ってください。
 - クーポンを利用するときは、初回checkoutに `coupon_code`、署名するウォレットの `payer_address`、16〜64文字の `idempotency_key` (UUID推奨) を送ります。通信断後は同じ購入内容・同じキーで再送し、返された予約と金額を使ってください。別の購入にキーを流用しません。
 - NFT割引は `discount: { rule_id }` だけを指定します。割引額や保有状態の自己申告は使われません。NFT割引とクーポンは併用不可です。
 - クーポンの総上限・ウォレット上限は予約時に確保されます。409 `coupon_total_limit_reached` / `coupon_wallet_limit_reached` / `coupon_not_applicable` / `coupon_changed` ではコードと条件を確認してください。別ウォレットでの制限回避を行ってはいけません。

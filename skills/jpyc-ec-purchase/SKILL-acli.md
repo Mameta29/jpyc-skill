@@ -209,7 +209,7 @@ echo "$PAYMENT_REQUIRED_B64" \
 | `is_gift` / `gift_recipient` | 任意 | 贈り物のとき両方セット |
 | `checkout_options` | 任意 | ショップ定義オプション (のし等) |
 | `customer_note` | 任意 | max 2000 文字 |
-| `payer_address` | 任意 (推奨) | 署名するウォレット。settle 時に署名の `from` と照合。不一致は 400 `payer_mismatch` (2026-07 追加) |
+| `payer_address` | 通常は任意 (推奨)、AA・NFT割引・クーポンでは必須 | 署名するウォレット。settle 時に署名の `from` と照合。不一致は 400 `payer_mismatch` (2026-07 追加) |
 | `pos_session_id` | 使用しない | 対面レジ UI 専用の内部フィールド。エージェントは送らない (2026-08 追加) |
 
 エラーコード:
@@ -428,6 +428,8 @@ curl -sS -X POST "https://ec.jpyc-service.com/api/v1/orders/{ORDER_NUMBER}/downl
 
 レスポンス `data`: `{ url, file_name, version, expires_in_seconds }`。署名者アドレスが注文の購入ウォレットと一致する場合のみ発行。ファイルは 2 種類: **アップロード型** は `url` が短命な署名付き URL で `expires_in_seconds` 秒 (既定 300) で失効するため取得後すぐ DL する。**外部URL型** は `url` がショップ登録の外部 URL で有効期限がなく `expires_in_seconds` は `null`。常に最新版が返る (ショップがファイルを差し替えても同手順で最新版取得)。エラー: `MISSING_SIGNATURE`・`INVALID_MESSAGE`(400) / `UNAUTHORIZED`(401: nonce 期限切れ・使用済み・署名不正・署名先ドメイン不一致) / `ORDER_NOT_FOUND`(404) / `FORBIDDEN`・`NOT_PURCHASED`(403) / `NO_FILE`(404) / `RATE_LIMITED`(429) / `AUTH_UNAVAILABLE`(503: サービス側の認証設定不足)。
 
+LINE連携用のSIWE署名は、`statement` や `resources` に専用の用途・LINEアカウントを含むため、ダウンロードやレシートなど別のAPIには転用できません。目的に合う新しいメッセージへ署名してください。
+
 nonce は並行リクエスト間でも1回しか使用できない。再試行する場合は新しいnonceを取得し、
 対象のECドメインと購入時のチェーンで再署名する。スマートウォレットの署名も、
 SIWEに指定したチェーン上で検証される。`AUTH_UNAVAILABLE` の場合は再署名を繰り返さず、
@@ -439,8 +441,7 @@ SIWEに指定したチェーン上で検証される。`AUTH_UNAVAILABLE` の場
 curl -sS https://ec.jpyc-service.com/api/v1/shops/{SLUG}/nft-discounts | jq .
 ```
 
-`/api/v1/checkout` は `discount` ブロックを受け付けるが、対象 NFT の保有確認と
-割引額算出は呼び出し側の責務。情報取得のみのエンドポイント。
+ルール取得後、`/api/v1/checkout` に `discount: { rule_id }` と署名する `payer_address` を渡します。対象NFTの保有確認と割引額はサーバーが再計算します。クーポンとは併用できません。
 
 ### 残高チェック (任意)
 
@@ -500,12 +501,13 @@ curl -isS -X POST \
 > **HTTP/2 ヘッダ名は小文字**で来る点に注意: `awk -F': ' '/^PAYMENT-REQUIRED:/...'`
 > ではマッチしません。上の例のように `tolower($1)=="payment-required"` を使うこと。
 
-## 2026-09-12 ステージングでの販売機能追加
+## 2026-09-18 販売期間・数量上限・クーポン
 
-以下はステージング (`https://stg-ec.jpyc-service.com/api/v1`) の仕様です。本番に同じ機能があると推測せず、対象環境の商品レスポンスとOpenAPIで対応を確認してください。
+以下は本番とステージングの共通仕様です。ユーザーが選んだ環境の商品レスポンスとOpenAPIを確認し、その環境のAPI・対応チェーンを使ってください。
 
-- 商品の `max_quantity_per_order` がある場合、同一商品のバリエーション違いを含む数量合計を上限以下にしてください。`null` は購入上限なしです。
+- 同一商品の複数バリエーションはそれぞれ `items[]` の別行に指定できます。在庫と購入上限は商品単位の数量合計で判定されます。商品の `max_quantity_per_order` がある場合、同一商品のバリエーション違いを含む数量合計を上限以下にしてください。`null` は購入上限なしです。
 - `online_sale_status` (`coming_soon` / `on_sale` / `ended`)、`online_purchase_available`、販売開始・終了日時を確認してください。公開中でも販売期間外には購入できません。予約時にはサーバーが再検証し、409 `sale_not_started` / `sale_ended` / `quantity_limit_exceeded` を返す場合があります。
+- 販売期間の対面レジ例外は、ショップがPOS販売を許可した配送不要・バリエーションなしの商品だけに適用されます。外部購入クライアントは `X-JPYC-CLIENT: pos` や `pos_session_id` を送らず、販売開始を待ってください。
 - クーポンを利用するときは、初回checkoutに `coupon_code`、署名するウォレットの `payer_address`、16〜64文字の `idempotency_key` (UUID推奨) を送ります。通信断後は同じ購入内容・同じキーで再送し、返された予約と金額を使ってください。別の購入にキーを流用しません。
 - NFT割引は `discount: { rule_id }` だけを指定します。割引額や保有状態の自己申告は使われません。NFT割引とクーポンは併用不可です。
 - クーポンの総上限・ウォレット上限は予約時に確保されます。409 `coupon_total_limit_reached` / `coupon_wallet_limit_reached` / `coupon_not_applicable` / `coupon_changed` ではコードと条件を確認してください。別ウォレットでの制限回避を行ってはいけません。
