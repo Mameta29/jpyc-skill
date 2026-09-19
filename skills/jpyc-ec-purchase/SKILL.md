@@ -523,19 +523,21 @@ Content-Type: application/json
 | 404 | `product_disappeared` | 商品が削除された | 別の商品提案 |
 | 409 | `insufficient_stock` | 在庫切れ | 別の商品提案 |
 | 409 | `shop_wallet_changed` | ショップがウォレット変更 | step 2 からやり直し |
-| 429 | `rate_limited` | 30 req/60s/IP | 数秒待ってリトライ |
+| 429 | `rate_limited` | 決済・確認は900 req/60s/IP、かつ40 req/60s/予約ID (予約作成の30 req/60s/IPとは別枠) | 15秒以上待ち、同じ予約・支払い情報でリトライ |
 | 502 | `facilitator_insufficient_native_balance` | facilitator (relayer) の gas 切れ | リトライ (運営に自動通知される。復旧まで数分かかることがある) |
 | 502 | `settlement_failed` | facilitator が settle 失敗 (上記以外) | リトライ。繰り返すなら運営に問い合わせ |
 | 502 | `unexpected_settle_error` | facilitator が分類不能な例外を捕捉 | リトライ。繰り返すなら運営に問い合わせ |
 | 502 | `facilitator_unreachable` | 決済サービスに接続不可 (資金は動いていない) | リトライ |
 | 502 | `settle_precondition_failed` | settle 前の記録に失敗 (資金は動いていない) | リトライ |
 | 502 | `authorization_already_used` | **この nonce は既にオンチェーンで消費済み = 支払いは成立している** | `settlement_state_unknown` と同じ扱い: 再署名せず `GET /orders` で注文を確認 (自動復旧される) |
-| 502 | `settlement_state_unknown` | **決済結果が不明 (資金が動いている可能性あり)** | **絶対に即再署名・再購入しない**。2〜3 分待って `GET /orders?customer_address=...` を確認。注文があれば決済成功 (自動復旧)。無い場合も支払い未成立とは断定せず、同じ予約の状態照会または運営確認を続ける |
+| 409 / 502 | `settlement_state_unknown` | **決済結果が不明 (資金が動いている可能性あり)** | **再署名・再送金・再購入しない**。2〜3 分待って `GET /orders?customer_address=...` を確認。注文があれば決済成功 (自動復旧)。無い場合も支払い未成立とは断定せず、同じ予約の状態照会または運営確認を続ける |
 
 > **冪等リプレイ (2026-07 追加)**: 同じ `reservation_id` + `PAYMENT-SIGNATURE` で
 > settle を再送した場合、既に決済済みなら同じ注文情報が 200 で返る。
 > トランスポートエラー (接続断・タイムアウト) 後のリトライは安全。
 > `settlement_state_unknown` を受けた場合のみ、上記の手順で状態確認を挟むこと。
+
+> **送金確認の間隔 (2026-09)**: `erc20-transfer` の `transfer_not_found` (402) は同じ予約・支払い情報のまま、前の応答を待ち、確認開始を通常2秒以上空けて再試行する。長時間未確定・接続エラーは5秒以上、429は15秒以上待つ。Polygonは`finalized`、Kaia mainnetはBFTの即時確定を使い、どちらも送金ログ・receipt・正規ブロックを照合してから確定する。RPCの不整合は502 `transfer_verification_failed` として再確認する。送金をやり直さず復旧情報を保持する。EIP-3009のFacilitator確定条件は変更なし。方式別の送金前所有確認・payloadは [OpenAPI](https://ec.jpyc-service.com/api/v1/openapi.yaml) を参照。
 
 ---
 
