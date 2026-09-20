@@ -378,12 +378,14 @@ PAYMENT-RESPONSE: eyJzdWNjZXNzIjp0cnVlLC...
 | 404 | `reservation_not_found` | 5 分超過→step 2 やり直し (決済済みへの再送では返らない: 冪等リプレイで 200) |
 | 404 | `product_disappeared` | 商品削除 |
 | 409 | `insufficient_stock` / `shop_wallet_changed` | step 2 からやり直し |
-| 429 | `rate_limited` | 数秒待ち |
+| 429 | `rate_limited` | 決済・確認は900 req/60s/IP、かつ40 req/60s/予約ID (予約作成の30 req/60s/IPとは別枠)。15秒以上待ち、同じ予約・支払い情報で再試行 |
 | 502 | `facilitator_insufficient_native_balance` | facilitator の gas 切れ。リトライ (運営に自動通知。復旧まで数分かかることも) |
 | 502 | `settlement_failed` / `unexpected_settle_error` | facilitator が settle 失敗。リトライ。繰り返すなら運営に問い合わせ |
 | 502 | `facilitator_unreachable` / `settle_precondition_failed` | 資金は動いていない。リトライ可 |
 | 502 | `authorization_already_used` | 支払い成立済み。再署名せず `GET /orders` を確認 (注文は自動復旧) |
-| 502 | `settlement_state_unknown` | **資金が動いた可能性あり。即再署名しない**。2〜3 分後に `GET /orders?customer_address=...` を確認 — 注文があれば成功 (自動復旧)、無ければ再試行可 |
+| 409 / 502 | `settlement_state_unknown` | **資金が動いた可能性あり。再署名・再送金・再購入しない**。2〜3 分後に `GET /orders?customer_address=...` を確認。注文が無くても未払いとは断定せず、同じ予約の確認または運営確認を続ける |
+
+> **送金確認の間隔 (2026-09)**: `erc20-transfer` の `transfer_not_found` (402) は同じ予約・支払い情報のまま、前の応答を待ち、確認開始を通常2秒以上空けて再試行する。長時間未確定・接続エラーは5秒以上、429は15秒以上待つ。Polygonは`finalized`、Kaia mainnetはBFTの即時確定を使い、どちらも送金ログ・receipt・正規ブロックを照合してから確定する。RPCの不整合は502 `transfer_verification_failed` として再確認する。送金をやり直さず復旧情報を保持する。EIP-3009のFacilitator確定条件は変更なし。方式別の送金前所有確認・payloadは [OpenAPI](https://ec.jpyc-service.com/api/v1/openapi.yaml) を参照。
 
 ---
 
